@@ -10,6 +10,7 @@ def test_chat(client: TestClient) -> None:
     assert response.json() == {
         "response": "Olá, eu sou o Origin.",
         "model": "fake",
+        "session_id": None,
         "tool_calls": [],
     }
 

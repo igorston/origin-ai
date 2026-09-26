@@ -1,25 +1,38 @@
 from collections.abc import AsyncIterator
 from typing import Annotated, TypeVar
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from origin.config import Settings, get_settings
 from origin.core import ChatTurn, LLMEngine, ToolCallRecord
+from origin.memory.storage import SessionStore
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+T = TypeVar("T")
 
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
+    # Either keep the conversation server-side with `session_id`, or send `history` yourself.
+    session_id: str | None = None
     history: list[ChatTurn] = []
     use_memory: bool = True
     use_tools: bool = True
+
+    @model_validator(mode="after")
+    def _session_or_history(self) -> "ChatRequest":
+        if self.session_id and self.history:
+            raise ValueError("send either session_id or history, not both")
+        return self
 
 
 class ChatResponse(BaseModel):
     response: str
     model: str
+    session_id: str | None = None
     tool_calls: list[ToolCallRecord] = []
 
 
@@ -27,16 +40,37 @@ def get_engine(request: Request) -> LLMEngine:
     return request.app.state.engine
 
 
+def get_sessions(request: Request) -> SessionStore:
+    return request.app.state.sessions
+
+
 Engine = Annotated[LLMEngine, Depends(get_engine)]
+Sessions = Annotated[SessionStore, Depends(get_sessions)]
+AppSettings = Annotated[Settings, Depends(get_settings)]
 
 
-@router.post("", response_model=ChatResponse)
-async def chat(body: ChatRequest, engine: Engine) -> ChatResponse:
-    result = await engine.generate(body.message, body.history, body.use_memory, body.use_tools)
-    return ChatResponse(response=result.text, model=engine.model_name, tool_calls=result.tool_calls)
+async def resolve_history(body: ChatRequest, sessions: SessionStore, limit: int) -> list[ChatTurn]:
+    if body.session_id is None:
+        return body.history
+    if await sessions.get(body.session_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Session {body.session_id!r} not found")
+    stored = await sessions.messages(body.session_id, limit=limit)
+    return [ChatTurn(role=m.role, content=m.content) for m in stored]
 
 
-T = TypeVar("T")
+async def save_exchange(
+    sessions: SessionStore,
+    session_id: str | None,
+    message: str,
+    answer: str,
+    tool_calls: list[ToolCallRecord],
+) -> None:
+    if session_id is None:
+        return
+    await sessions.append(session_id, "user", message)
+    await sessions.append(
+        session_id, "assistant", answer, [call.model_dump() for call in tool_calls]
+    )
 
 
 async def prefetch(events: AsyncIterator[T]) -> AsyncIterator[T]:
@@ -53,7 +87,44 @@ async def prefetch(events: AsyncIterator[T]) -> AsyncIterator[T]:
     return replay()
 
 
+@router.post("", response_model=ChatResponse)
+async def chat(
+    body: ChatRequest, engine: Engine, sessions: Sessions, settings: AppSettings
+) -> ChatResponse:
+    history = await resolve_history(body, sessions, settings.session_history_limit)
+    result = await engine.generate(body.message, history, body.use_memory, body.use_tools)
+    await save_exchange(sessions, body.session_id, body.message, result.text, result.tool_calls)
+    return ChatResponse(
+        response=result.text,
+        model=engine.model_name,
+        session_id=body.session_id,
+        tool_calls=result.tool_calls,
+    )
+
+
 @router.post("/stream")
-async def chat_stream(body: ChatRequest, engine: Engine) -> StreamingResponse:
-    events = engine.stream(body.message, body.history, body.use_memory, body.use_tools)
-    return StreamingResponse(await prefetch(events), media_type="text/plain; charset=utf-8")
+async def chat_stream(
+    body: ChatRequest, engine: Engine, sessions: Sessions, settings: AppSettings
+) -> StreamingResponse:
+    history = await resolve_history(body, sessions, settings.session_history_limit)
+    events = engine.events(body.message, history, body.use_memory, body.use_tools)
+
+    async def text_and_persist() -> AsyncIterator[str]:
+        parts: list[str] = []
+        tool_calls: list[ToolCallRecord] = []
+        try:
+            async for event in events:
+                if isinstance(event, str):
+                    parts.append(event)
+                    yield event
+                else:
+                    tool_calls.append(event)
+        finally:
+            # Also runs when the client disconnects mid-stream: keep what was produced.
+            if parts or tool_calls:
+                await save_exchange(
+                    sessions, body.session_id, body.message, "".join(parts), tool_calls
+                )
+
+    stream = await prefetch(text_and_persist())
+    return StreamingResponse(stream, media_type="text/plain; charset=utf-8")

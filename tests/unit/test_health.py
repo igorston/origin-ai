@@ -49,7 +49,7 @@ class FailingEngine(LLMEngine):
     async def generate(self, *args: object, **kwargs: object):
         raise self.exc
 
-    async def stream(self, *args: object, **kwargs: object):
+    async def events(self, *args: object, **kwargs: object):
         raise self.exc
         yield  # pragma: no cover
 

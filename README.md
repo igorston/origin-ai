@@ -78,19 +78,34 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
 | `/health` | GET | Status, versão e estado do Ollama/modelos (503 se degradado) |
-| `/chat` | POST | Resposta completa `{response, model, tool_calls}` |
+| `/chat` | POST | Resposta completa `{response, model, session_id, tool_calls}` |
 | `/chat/stream` | POST | Resposta em streaming (`text/plain`) |
+| `/sessions` | POST / GET | Cria uma conversa / lista as conversas (mais recentes primeiro) |
+| `/sessions/{id}` | GET / DELETE | Conversa com todas as mensagens / apaga a conversa |
 | `/memory` | POST | Salva fatos na memória de longo prazo `{texts, metadata?}` |
 | `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` |
 | `/memory/{id}` | DELETE | Remove uma memória |
 | `/memory/stats` | GET | Total de memórias na coleção |
 | `/tools` | GET | Tools carregadas (nome, descrição, argumentos) |
 
-O corpo do chat aceita `message`, um `history` opcional (`[{"role": "user" \| "assistant", "content": "..."}]`), `use_memory` e `use_tools` (ambos com padrão `true`).
+O corpo do chat aceita `message`, `use_memory` e `use_tools` (ambos com padrão `true`) e **uma** das formas de contexto:
+
+- `session_id`: o Origin guarda a conversa em SQLite (`data/origin.db`) e envia ao modelo as últimas `SESSION_HISTORY_LIMIT` mensagens. As tool calls também ficam registradas.
+- `history`: você mesmo envia o histórico (`[{"role": "user" \| "assistant", "content": "..."}]`), sem nada gravado no servidor.
+
+```bash
+SID=$(curl -s -X POST http://127.0.0.1:8000/sessions | jq -r .id)
+curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
+  -d "{\"message\": \"Minha irmã Júlia adora chocolate amargo, guarda isso.\", \"session_id\": \"$SID\"}"
+curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
+  -d "{\"message\": \"O que eu levo de presente pra ela?\", \"session_id\": \"$SID\"}"
+```
 
 ### Memória de longo prazo (RAG)
 
 A cada mensagem, o Origin busca na memória vetorial local (Chroma em `data/.chroma`) os fatos mais relevantes e os injeta no prompt de sistema. Só entram fatos com similaridade de cosseno ≥ `MEMORY_MIN_SCORE` (padrão `0.45`), no máximo `MEMORY_TOP_K` (padrão `4`).
+
+Perguntas de seguimento como "E do que **ela** gosta?" não dizem sozinhas de quem se trata. Por isso, com `MEMORY_CONTEXTUAL_RECALL=true` (padrão), a memória também é consultada com a última troca da conversa antes da pergunta, e cada fato fica com o melhor score entre as duas buscas. Num eval com 28 memórias, sendo 25 de distração, as perguntas de seguimento passaram de 5/15 para 15/15 acertos.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/memory \
@@ -144,7 +159,7 @@ A docstring é o que o modelo lê para decidir quando usar a tool, então diga c
 
 ### Avaliação do agente
 
-`scripts/eval_agent.py` roda casos reais, simples e compostos, contra os modelos locais, cada um com uma memória isolada. Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
+`scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma) e `followup` (recuperar fatos pelo contexto). Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
 
 ```bash
 python scripts/eval_agent.py                          # configuração atual, 3 runs por caso

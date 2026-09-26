@@ -26,7 +26,7 @@ from chromadb.config import Settings as ChromaSettings  # noqa: E402
 from langchain_ollama import OllamaEmbeddings  # noqa: E402
 
 from origin.config import get_settings  # noqa: E402
-from origin.core import ChatResult, LLMEngine  # noqa: E402
+from origin.core import ChatResult, ChatTurn, LLMEngine  # noqa: E402
 from origin.integrations import ToolContext, ToolRegistry  # noqa: E402
 from origin.memory import VectorMemory  # noqa: E402
 
@@ -67,8 +67,64 @@ def no_tools() -> Check:
     return lambda r, _: not r.tool_calls
 
 
+def no_remember() -> Check:
+    return lambda r, _: "remember" not in {c.name for c in r.tool_calls}
+
+
 def remembered(*needles: str) -> Check:
-    return lambda _, memories: all(any(n in m for m in memories) for n in needles)
+    """Every needle appears in some memory the agent saved during this case."""
+    return lambda _, memories: all(
+        any(n in text for source, text in memories if source == "agent") for n in needles
+    )
+
+
+EN_MARKERS = re.compile(
+    r"\b(I|I've|I'll|you|your|okay|saved|noted|let me know|anything else)\b", re.IGNORECASE
+)
+
+
+def portuguese() -> Check:
+    """Reply did not drift into English (e.g. after English tool output)."""
+    return lambda r, _: bool(r.text.strip()) and not EN_MARKERS.search(r.text)
+
+
+def forgotten(needle: str) -> Check:
+    """No memory at all (seeded or saved) still contains the needle."""
+    return lambda _, memories: not any(needle in text for _, text in memories)
+
+
+def stored_once(needle: str) -> Check:
+    return lambda _, memories: sum(needle in text for _, text in memories) == 1
+
+
+# A realistic memory holds many unrelated facts; follow-up cases must find theirs among these.
+DISTRACTORS = [
+    "Meu time do coração é o Sport.",
+    "Trabalho como engenheiro de software.",
+    "Prefiro café sem açúcar.",
+    "Minha mãe se chama Helena e mora em Recife.",
+    "Meu pai gosta de pescar nos fins de semana.",
+    "Tenho alergia a camarão.",
+    "Minha cor favorita é azul.",
+    "Uso VS Code como editor principal.",
+    "Meu carro é um Onix prata.",
+    "Corro 5 km toda segunda e quarta.",
+    "Meu melhor amigo se chama Bruno.",
+    "Gosto de ouvir jazz enquanto trabalho.",
+    "Minha sogra adora orquídeas.",
+    "Estou aprendendo japonês.",
+    "Meu gato se chama Mingau.",
+    "Viajei para Lisboa em 2024.",
+    "Não gosto de filmes de terror.",
+    "Meu livro favorito é Dom Casmurro.",
+    "Minha sobrinha Laura faz balé.",
+    "Minha tia Marta cozinha muito bem.",
+    "Meu colega Felipe gosta de cerveja artesanal.",
+    "Tenho consulta no oftalmologista todo ano em janeiro.",
+    "Minha vizinha Clara tem dois cachorros.",
+    "Meu primo Rafael mora no Canadá.",
+    "Gosto de pizza de calabresa.",
+]
 
 
 @dataclass
@@ -77,6 +133,7 @@ class Case:
     message: str
     checks: list[Check]
     seed: list[str] = field(default_factory=list)
+    history: list[tuple[str, str]] = field(default_factory=list)
 
 
 CASES = [
@@ -84,8 +141,16 @@ CASES = [
     Case("single", "Oi, tudo bem?", [no_tools()]),
     Case("single", "Explique o que é uma API REST em uma frase.", [no_tools()]),
     Case("single", "Qual a capital da França?", [no_tools(), says("Paris")]),
-    Case("single", "Lembre que meu time favorito é o Sport.", [remembered("Sport")]),
-    Case("single", "Anota aí: tenho dentista na quinta às 15h.", [remembered("dentista")]),
+    Case(
+        "single",
+        "Lembre que meu time favorito é o Sport.",
+        [remembered("Sport"), portuguese()],
+    ),
+    Case(
+        "single",
+        "Anota aí: tenho dentista na quinta às 15h.",
+        [remembered("dentista"), portuguese()],
+    ),
     Case("single", "Que dia é hoje?", [says(WEEKDAY_PT)]),
     Case("single", "Quantos dias faltam para o Natal?", [number(DAYS_TO_XMAS)]),
     Case(
@@ -140,6 +205,81 @@ CASES = [
         [says("Thor"), matches(r"\b\d{1,2}[:h]\d{2}\b")],
         seed=["Meu cachorro se chama Thor."],
     ),
+    # session: requests in earlier turns were already handled and must not be repeated
+    Case(
+        "session",
+        "Qual a capital da Itália?",
+        [no_tools(), says("Roma")],
+        history=[
+            ("user", "Lembre que meu time favorito é o Sport."),
+            ("assistant", "Pronto, anotei que seu time favorito é o Sport."),
+        ],
+    ),
+    Case(
+        "session",
+        "Me dá uma dica rápida de estudo.",
+        [no_tools(), portuguese()],
+        history=[
+            ("user", "Anota que tenho dentista na quinta às 15h."),
+            ("assistant", "Anotado: dentista na quinta às 15h."),
+        ],
+    ),
+    Case(
+        "session",
+        "E quantos dias faltam pro Natal?",
+        [called("days_until"), no_remember(), number(DAYS_TO_XMAS), portuguese()],
+        history=[
+            ("user", "Guarda que meu aniversário é 10 de março."),
+            ("assistant", "Guardei: seu aniversário é 10 de março."),
+        ],
+    ),
+    # follow-up: the fact is only findable with the previous exchange as context
+    Case(
+        "followup",
+        "O que eu poderia levar de presente pra ela?",
+        [says("chocolate")],
+        seed=[
+            *DISTRACTORS,
+            "Minha irmã se chama Júlia.",
+            "Júlia adora chocolate amargo.",
+            "Minha esposa Ana gosta de vinho tinto.",
+            "Meu chefe se chama Roberto.",
+        ],
+        history=[
+            ("user", "Vou visitar minha irmã Júlia no sábado."),
+            ("assistant", "Que ótimo! Aproveite a visita."),
+        ],
+    ),
+    Case(
+        "followup",
+        "Quando é o aniversário dela?",
+        [says("maio")],
+        seed=[
+            *DISTRACTORS,
+            "Minha esposa se chama Ana.",
+            "Ana faz aniversário em 12 de maio.",
+            "Meu irmão Carlos faz aniversário em 3 de agosto.",
+        ],
+        history=[
+            ("user", "Estou pensando numa surpresa pra minha esposa."),
+            ("assistant", "Que legal! Posso ajudar com ideias."),
+        ],
+    ),
+    Case(
+        "followup",
+        "Qual framework ele usa mesmo?",
+        [says("FastAPI")],
+        seed=[
+            *DISTRACTORS,
+            "Meu projeto atual se chama Origin.",
+            "O Origin é construído com FastAPI e LangChain.",
+            "Tenho reunião com o Roberto toda terça.",
+        ],
+        history=[
+            ("user", "Preciso de ajuda com o Origin, meu projeto atual."),
+            ("assistant", "Claro! No que posso ajudar?"),
+        ],
+    ),
 ]
 
 
@@ -151,12 +291,17 @@ async def run_case(case: Case, settings, embeddings) -> tuple[bool, float, ChatR
     tools = ToolRegistry.discover(ToolContext(settings, memory)).tools
     engine = LLMEngine.from_settings(settings, memory=memory, tools=tools)
 
+    history = [ChatTurn(role=role, content=content) for role, content in case.history]
     start = time.perf_counter()
-    result = await engine.generate(case.message)
+    result = await engine.generate(case.message, history)
     elapsed = time.perf_counter() - start
 
-    stored = memory._store.get(where={"source": "agent"})["documents"] if memory.count() else []
-    return all(check(result, stored) for check in case.checks), elapsed, result
+    stored = memory._store.get()
+    memories = [
+        (meta.get("source", ""), text)
+        for meta, text in zip(stored["metadatas"], stored["documents"], strict=True)
+    ]
+    return all(check(result, memories) for check in case.checks), elapsed, result
 
 
 async def main() -> None:
@@ -166,7 +311,8 @@ async def main() -> None:
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--reasoning", choices=["true", "false", "none"])
     parser.add_argument("--routing", choices=["true", "false"])
-    parser.add_argument("--only", choices=["single", "compound"])
+    parser.add_argument("--contextual-recall", choices=["true", "false"])
+    parser.add_argument("--only", choices=sorted({c.group for c in CASES}))
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -179,6 +325,8 @@ async def main() -> None:
         overrides["ollama_reasoning"] = {"true": True, "false": False, "none": None}[args.reasoning]
     if args.routing:
         overrides["agent_tool_routing"] = args.routing == "true"
+    if args.contextual_recall:
+        overrides["memory_contextual_recall"] = args.contextual_recall == "true"
     settings = get_settings().model_copy(update=overrides)
     embeddings = OllamaEmbeddings(
         model=settings.ollama_embed_model, base_url=settings.ollama_base_url
@@ -188,7 +336,7 @@ async def main() -> None:
     print(
         f"model={settings.ollama_model} temperature={settings.ollama_temperature} "
         f"reasoning={settings.ollama_reasoning} routing={settings.agent_tool_routing} "
-        f"runs={args.runs}\n"
+        f"contextual_recall={settings.memory_contextual_recall} runs={args.runs}\n"
     )
     await LLMEngine.from_settings(settings).generate("ok", use_memory=False, use_tools=False)
 

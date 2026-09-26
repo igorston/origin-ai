@@ -16,12 +16,13 @@ from fastapi import FastAPI
 
 from origin import __version__
 from origin.api.errors import register_error_handlers
-from origin.api.routes import chat, health, memory, tools
+from origin.api.routes import chat, health, memory, sessions, tools
 from origin.config import get_settings
 from origin.core import LLMEngine
 from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
+from origin.memory.storage import SessionStore
 
 settings = get_settings()
 
@@ -35,6 +36,7 @@ logger = logging.getLogger("origin")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory = VectorMemory.from_settings(settings)
+    app.state.sessions = SessionStore(settings.sqlite_path)
     registry = (
         ToolRegistry.discover(
             ToolContext(settings, app.state.memory), disabled=settings.tools_disabled
@@ -78,6 +80,7 @@ app = FastAPI(
 register_error_handlers(app)
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(sessions.router)
 app.include_router(memory.router)
 app.include_router(tools.router)
 

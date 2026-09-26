@@ -1,5 +1,7 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
+from itertools import chain
 from typing import Literal
 
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
@@ -11,10 +13,13 @@ from pydantic import BaseModel
 
 from origin.config import Settings
 from origin.core.agent import ToolCallRecord, execute_tool_calls
-from origin.memory import VectorMemory
+from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
 
 logger = logging.getLogger(__name__)
+
+# How much of the previous exchange is prepended to the memory query for follow-ups.
+RECALL_CONTEXT_CHARS = 500
 
 
 class ChatTurn(BaseModel):
@@ -41,6 +46,7 @@ class LLMEngine:
         tools: Mapping[str, BaseTool] | None = None,
         max_tool_iterations: int = 5,
         tool_routing: bool = False,
+        contextual_recall: bool = True,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -51,6 +57,7 @@ class LLMEngine:
         self.tools = dict(tools or {})
         self.max_tool_iterations = max_tool_iterations
         self.tool_routing = tool_routing
+        self.contextual_recall = contextual_recall
 
     @classmethod
     def from_settings(
@@ -76,6 +83,7 @@ class LLMEngine:
             tools=tools,
             max_tool_iterations=settings.agent_max_tool_iterations,
             tool_routing=settings.agent_tool_routing,
+            contextual_recall=settings.memory_contextual_recall,
         )
 
     def _bind_tools(
@@ -89,16 +97,30 @@ class LLMEngine:
             logger.warning("Model %s does not support tool calling", self.model_name)
             return self.model, {}
 
-    async def _recall(self, message: str) -> str | None:
+    async def _recall(self, message: str, history: Sequence[ChatTurn] = ()) -> str | None:
         if self.memory is None:
             return None
+        # Follow-ups like "and her birthday?" carry no entity on their own, so also search with
+        # the last exchange prepended, and keep each memory's best score across both queries.
+        queries = [message]
+        if history and self.contextual_recall:
+            recent = "\n".join(turn.content for turn in history[-2:])
+            queries.append(f"{recent[-RECALL_CONTEXT_CHARS:]}\n{message}")
         try:
-            hits = await self.memory.search(
-                message, k=self.memory_top_k, min_score=self.memory_min_score
+            results = await asyncio.gather(
+                *(
+                    self.memory.search(query, k=self.memory_top_k, min_score=self.memory_min_score)
+                    for query in queries
+                )
             )
         except Exception:
             logger.warning("Memory recall failed; answering without memory", exc_info=True)
             return None
+        best: dict[str, MemoryHit] = {}
+        for hit in chain.from_iterable(results):
+            if hit.id not in best or hit.score > best[hit.id].score:
+                best[hit.id] = hit
+        hits = sorted(best.values(), key=lambda hit: hit.score, reverse=True)[: self.memory_top_k]
         if not hits:
             return None
         memories = "\n".join(f"- {hit.content}" for hit in hits)
@@ -114,7 +136,7 @@ class LLMEngine:
         sections = [self.system_prompt]
         if with_tools:
             sections.append(load_prompt("tools"))
-        if use_memory and (context := await self._recall(message)):
+        if use_memory and (context := await self._recall(message, history)):
             sections.append(context)
 
         messages: list[BaseMessage] = [SystemMessage("\n\n".join(sections))]
@@ -124,8 +146,12 @@ class LLMEngine:
         messages.append(HumanMessage(message))
         return messages
 
-    async def _run(
-        self, message: str, history: Sequence[ChatTurn], use_memory: bool, use_tools: bool
+    async def events(
+        self,
+        message: str,
+        history: Sequence[ChatTurn] = (),
+        use_memory: bool = True,
+        use_tools: bool = True,
     ) -> AsyncIterator[str | ToolCallRecord]:
         """Agent loop: yields text chunks as they stream and a record per executed tool call."""
         bound, tools = self._bind_tools(use_tools)
@@ -178,7 +204,7 @@ class LLMEngine:
     ) -> ChatResult:
         text: list[str] = []
         tool_calls: list[ToolCallRecord] = []
-        async for event in self._run(message, history, use_memory, use_tools):
+        async for event in self.events(message, history, use_memory, use_tools):
             if isinstance(event, str):
                 text.append(event)
             else:
@@ -192,6 +218,6 @@ class LLMEngine:
         use_memory: bool = True,
         use_tools: bool = True,
     ) -> AsyncIterator[str]:
-        async for event in self._run(message, history, use_memory, use_tools):
+        async for event in self.events(message, history, use_memory, use_tools):
             if isinstance(event, str):
                 yield event

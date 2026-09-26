@@ -24,6 +24,11 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         Call it once per distinct fact.
         """
         (memory_id,) = await memory.add([fact], {"source": "agent"})
-        return f"Saved to long-term memory (id={memory_id})."
+        # The model reads this right before replying; English output alone made small
+        # models answer in English, so restate the language rule here.
+        return (
+            f"Saved to long-term memory (id={memory_id}). "
+            "Confirm briefly to the user in the same language the user wrote in."
+        )
 
     return [remember]

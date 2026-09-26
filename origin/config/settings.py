@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     memory_collection: str = "origin"
     memory_top_k: int = 4
     memory_min_score: float = 0.45
+    # Also search memory with the previous exchange, so follow-ups ("and hers?") find facts.
+    memory_contextual_recall: bool = True
 
     tools_enabled: bool = True
     tools_disabled: list[str] = []
@@ -38,6 +40,8 @@ class Settings(BaseSettings):
     # Extra "decide tools first" turn; fixes compound questions on small models (~+0.4s).
     agent_tool_routing: bool = True
     sqlite_path: str = "./data/origin.db"
+    # Most recent stored messages sent to the model as context for a session.
+    session_history_limit: int = 20
 
 
 @lru_cache
