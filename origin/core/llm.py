@@ -1,13 +1,16 @@
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Literal
 
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from origin.config import Settings
+from origin.core.agent import ToolCallRecord, execute_tool_calls
 from origin.memory import VectorMemory
 from origin.prompts import load_prompt
 
@@ -19,8 +22,13 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class ChatResult(BaseModel):
+    text: str
+    tool_calls: list[ToolCallRecord] = []
+
+
 class LLMEngine:
-    """Thin, model-agnostic wrapper around a LangChain chat model with optional RAG memory."""
+    """Model-agnostic chat engine with optional RAG memory and a tool-calling loop."""
 
     def __init__(
         self,
@@ -30,6 +38,8 @@ class LLMEngine:
         memory: VectorMemory | None = None,
         memory_top_k: int = 4,
         memory_min_score: float = 0.45,
+        tools: Mapping[str, BaseTool] | None = None,
+        max_tool_iterations: int = 5,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -37,13 +47,21 @@ class LLMEngine:
         self.memory = memory
         self.memory_top_k = memory_top_k
         self.memory_min_score = memory_min_score
+        self.tools = dict(tools or {})
+        self.max_tool_iterations = max_tool_iterations
 
     @classmethod
-    def from_settings(cls, settings: Settings, memory: VectorMemory | None = None) -> "LLMEngine":
+    def from_settings(
+        cls,
+        settings: Settings,
+        memory: VectorMemory | None = None,
+        tools: Mapping[str, BaseTool] | None = None,
+    ) -> "LLMEngine":
         model = ChatOllama(
             model=settings.ollama_model,
             base_url=settings.ollama_base_url,
             temperature=settings.ollama_temperature,
+            reasoning=settings.ollama_reasoning,
         )
         return cls(
             model,
@@ -52,7 +70,20 @@ class LLMEngine:
             memory=memory,
             memory_top_k=settings.memory_top_k,
             memory_min_score=settings.memory_min_score,
+            tools=tools,
+            max_tool_iterations=settings.agent_max_tool_iterations,
         )
+
+    def _bind_tools(
+        self, use_tools: bool
+    ) -> tuple[Runnable[LanguageModelInput, BaseMessage], dict[str, BaseTool]]:
+        if not (use_tools and self.tools):
+            return self.model, {}
+        try:
+            return self.model.bind_tools(list(self.tools.values())), self.tools
+        except NotImplementedError:
+            logger.warning("Model %s does not support tool calling", self.model_name)
+            return self.model, {}
 
     async def _recall(self, message: str) -> str | None:
         if self.memory is None:
@@ -70,30 +101,78 @@ class LLMEngine:
         return load_prompt("memory_context").format(memories=memories)
 
     async def _build_messages(
-        self, message: str, history: Sequence[ChatTurn] = (), use_memory: bool = True
+        self,
+        message: str,
+        history: Sequence[ChatTurn] = (),
+        use_memory: bool = True,
+        with_tools: bool = False,
     ) -> list[BaseMessage]:
-        system = self.system_prompt
+        sections = [self.system_prompt]
+        if with_tools:
+            sections.append(load_prompt("tools"))
         if use_memory and (context := await self._recall(message)):
-            system = f"{system}\n\n{context}"
+            sections.append(context)
 
-        messages: list[BaseMessage] = [SystemMessage(system)]
+        messages: list[BaseMessage] = [SystemMessage("\n\n".join(sections))]
         for turn in history:
             cls = HumanMessage if turn.role == "user" else AIMessage
             messages.append(cls(turn.content))
         messages.append(HumanMessage(message))
         return messages
 
+    async def _run(
+        self, message: str, history: Sequence[ChatTurn], use_memory: bool, use_tools: bool
+    ) -> AsyncIterator[str | ToolCallRecord]:
+        """Agent loop: yields text chunks as they stream and a record per executed tool call."""
+        bound, tools = self._bind_tools(use_tools)
+        messages = await self._build_messages(message, history, use_memory, bool(tools))
+
+        for iteration in range(self.max_tool_iterations + 1):
+            # On the last iteration drop the tools so the model is forced to answer.
+            final = iteration == self.max_tool_iterations
+            model = self.model if final else bound
+            response = None
+            async for chunk in model.astream(messages):
+                response = chunk if response is None else response + chunk
+                if chunk.text:
+                    yield chunk.text
+
+            tool_calls = getattr(response, "tool_calls", None)
+            if not tool_calls or not tools or final:
+                if tool_calls:
+                    logger.warning(
+                        "Tool iteration limit reached; ignoring %d call(s)", len(tool_calls)
+                    )
+                return
+            messages.append(response)
+            tool_messages, records = await execute_tool_calls(tool_calls, tools)
+            messages.extend(tool_messages)
+            for record in records:
+                yield record
+
     async def generate(
-        self, message: str, history: Sequence[ChatTurn] = (), use_memory: bool = True
-    ) -> str:
-        messages = await self._build_messages(message, history, use_memory)
-        result = await self.model.ainvoke(messages)
-        return result.text
+        self,
+        message: str,
+        history: Sequence[ChatTurn] = (),
+        use_memory: bool = True,
+        use_tools: bool = True,
+    ) -> ChatResult:
+        text: list[str] = []
+        tool_calls: list[ToolCallRecord] = []
+        async for event in self._run(message, history, use_memory, use_tools):
+            if isinstance(event, str):
+                text.append(event)
+            else:
+                tool_calls.append(event)
+        return ChatResult(text="".join(text), tool_calls=tool_calls)
 
     async def stream(
-        self, message: str, history: Sequence[ChatTurn] = (), use_memory: bool = True
+        self,
+        message: str,
+        history: Sequence[ChatTurn] = (),
+        use_memory: bool = True,
+        use_tools: bool = True,
     ) -> AsyncIterator[str]:
-        messages = await self._build_messages(message, history, use_memory)
-        async for chunk in self.model.astream(messages):
-            if chunk.text:
-                yield chunk.text
+        async for event in self._run(message, history, use_memory, use_tools):
+            if isinstance(event, str):
+                yield event

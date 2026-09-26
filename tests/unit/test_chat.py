@@ -7,7 +7,11 @@ from origin.memory import VectorMemory
 def test_chat(client: TestClient) -> None:
     response = client.post("/chat", json={"message": "Oi"})
     assert response.status_code == 200
-    assert response.json() == {"response": "Olá, eu sou o Origin.", "model": "fake"}
+    assert response.json() == {
+        "response": "Olá, eu sou o Origin.",
+        "model": "fake",
+        "tool_calls": [],
+    }
 
 
 def test_chat_stream(client: TestClient) -> None:

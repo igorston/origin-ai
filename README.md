@@ -51,7 +51,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
 # 4. Modelos locais
-ollama pull llama3.1               # LLM de chat
+ollama pull qwen3:8b               # LLM de chat (com tool calling)
 ollama pull bge-m3                 # embeddings multilíngues (memória)
 
 # 5. Configuração
@@ -78,14 +78,15 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
 | `/health` | GET | Status e versão |
-| `/chat` | POST | Resposta completa `{response, model}` |
+| `/chat` | POST | Resposta completa `{response, model, tool_calls}` |
 | `/chat/stream` | POST | Resposta em streaming (`text/plain`) |
 | `/memory` | POST | Salva fatos na memória de longo prazo `{texts, metadata?}` |
 | `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` |
 | `/memory/{id}` | DELETE | Remove uma memória |
 | `/memory/stats` | GET | Total de memórias na coleção |
+| `/tools` | GET | Tools carregadas (nome, descrição, argumentos) |
 
-O corpo do chat aceita `message`, um `history` opcional (`[{"role": "user" \| "assistant", "content": "..."}]`) e `use_memory` (padrão `true`).
+O corpo do chat aceita `message`, um `history` opcional (`[{"role": "user" \| "assistant", "content": "..."}]`), `use_memory` e `use_tools` (ambos com padrão `true`).
 
 ### Memória de longo prazo (RAG)
 
@@ -102,6 +103,36 @@ curl -X POST http://127.0.0.1:8000/chat \
 ```
 
 > O modelo de embeddings padrão é o `bge-m3` porque é multilíngue. Em testes com textos em português, o `nomic-embed-text` não separava fatos relevantes de irrelevantes. Se trocar de modelo, recalibre o `MEMORY_MIN_SCORE` e recrie a coleção, porque vetores de modelos diferentes não são compatíveis.
+
+### Tools (agente)
+
+O modelo decide sozinho quando chamar uma tool. O Origin executa a chamada, devolve o resultado ao modelo e repete o ciclo até ele responder, com no máximo `AGENT_MAX_TOOL_ITERATIONS` chamadas. Se uma tool falhar, o erro volta para o modelo em vez de derrubar a requisição.
+
+| Tool | O que faz |
+|------|-----------|
+| `remember` | Salva um fato sobre você na memória de longo prazo ("Lembre que...") |
+| `get_current_datetime` | Data, hora e dia da semana locais, no idioma de `ORIGIN_LOCALE` |
+| `days_until` | Dias até uma data (`MM-DD` = próxima ocorrência, ou `YYYY-MM-DD`) |
+
+**Criando uma tool:** crie um módulo em `origin/integrations/tools/` que exponha `get_tools(ctx)`. Ele é descoberto automaticamente na inicialização, sem nenhum registro manual.
+
+```python
+# origin/integrations/tools/weather.py
+from langchain_core.tools import BaseTool, tool
+
+
+def get_tools(ctx) -> list[BaseTool]:  # ctx.settings, ctx.memory
+    @tool
+    def get_weather(city: str) -> str:
+        """Return the current weather for a city the user asked about."""
+        return "sunny"
+
+    return [get_weather]
+```
+
+A docstring é o que o modelo lê para decidir quando usar a tool, então diga claramente **quando** usar e **quando não** usar. Para desativar tools sem apagar código, use `TOOLS_DISABLED='["remember"]'`, ou `TOOLS_ENABLED=false` para desligar todas.
+
+> **Por que qwen3:8b?** Num benchmark com 9 mensagens em português, o `qwen3:8b` acertou 9/9 as decisões de usar ou não uma tool. O `llama3.1` acertou 4/9, porque chamava tools até para "Oi, tudo bem?". Mesmo assim, modelos de 8B às vezes falham em perguntas compostas ("X **e** Y?"); nesse caso, divida em duas mensagens.
 
 ```bash
 pytest                  # todos os testes (integração é pulada se o Ollama estiver offline)
@@ -164,7 +195,7 @@ origin-ai/
 - [x] Estrutura base e entry point
 - [x] Engine LLM com Ollama + streaming
 - [x] Memória vetorial local (Chroma)
-- [ ] Sistema de tools plugáveis
+- [x] Sistema de tools plugáveis
 - [ ] Agente de automação de código
 - [ ] CLI / interface web
 

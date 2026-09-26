@@ -10,6 +10,7 @@ from langchain_ollama import OllamaEmbeddings
 
 from origin.config import get_settings
 from origin.core import LLMEngine
+from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
 
 settings = get_settings()
@@ -20,13 +21,19 @@ def _installed_models() -> set[str]:
         tags = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=2).json()
     except httpx.HTTPError:
         return set()
-    return {m["name"].split(":")[0] for m in tags.get("models", [])}
+    return {m["name"].removesuffix(":latest") for m in tags.get("models", [])}
 
 
 MODELS = _installed_models()
-requires_llm = pytest.mark.skipif(settings.ollama_model not in MODELS, reason="LLM not available")
+
+
+def _missing(model: str) -> bool:
+    return model.removesuffix(":latest") not in MODELS
+
+
+requires_llm = pytest.mark.skipif(_missing(settings.ollama_model), reason="LLM not available")
 requires_embeddings = pytest.mark.skipif(
-    settings.ollama_embed_model not in MODELS, reason="Embedding model not available"
+    _missing(settings.ollama_embed_model), reason="Embedding model not available"
 )
 pytestmark = pytest.mark.integration
 
@@ -43,8 +50,8 @@ def real_memory() -> VectorMemory:
 @requires_llm
 async def test_generate_with_ollama() -> None:
     engine = LLMEngine.from_settings(settings)
-    answer = await engine.generate("Say hello in one short sentence.")
-    assert answer.strip()
+    result = await engine.generate("Say hello in one short sentence.")
+    assert result.text.strip()
 
 
 @requires_llm
@@ -85,5 +92,22 @@ async def test_semantic_recall_in_portuguese(real_memory: VectorMemory) -> None:
 async def test_chat_uses_memory(real_memory: VectorMemory) -> None:
     await real_memory.add(["Meu cachorro se chama Thor."])
     engine = LLMEngine.from_settings(settings, memory=real_memory)
-    answer = await engine.generate("Como se chama o meu cachorro?")
-    assert "thor" in answer.lower()
+    result = await engine.generate("Como se chama o meu cachorro?", use_tools=False)
+    assert "thor" in result.text.lower()
+
+
+@requires_llm
+@requires_embeddings
+async def test_agent_picks_tools_only_when_needed(real_memory: VectorMemory) -> None:
+    tools = ToolRegistry.discover(ToolContext(settings, real_memory)).tools
+    engine = LLMEngine.from_settings(settings, memory=real_memory, tools=tools)
+
+    small_talk = await engine.generate("Oi, tudo bem?")
+    assert small_talk.tool_calls == []
+
+    saved = await engine.generate("Lembre que meu time favorito é o Sport.")
+    assert [c.name for c in saved.tool_calls] == ["remember"]
+    assert real_memory.count() == 1
+
+    recalled = await engine.generate("Qual é o meu time favorito?")
+    assert "sport" in recalled.text.lower()
