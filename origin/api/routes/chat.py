@@ -12,6 +12,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     history: list[ChatTurn] = []
+    use_memory: bool = True
 
 
 class ChatResponse(BaseModel):
@@ -28,12 +29,13 @@ Engine = Annotated[LLMEngine, Depends(get_engine)]
 
 @router.post("", response_model=ChatResponse)
 async def chat(body: ChatRequest, engine: Engine) -> ChatResponse:
-    response = await engine.generate(body.message, body.history)
+    response = await engine.generate(body.message, body.history, body.use_memory)
     return ChatResponse(response=response, model=engine.model_name)
 
 
 @router.post("/stream")
 async def chat_stream(body: ChatRequest, engine: Engine) -> StreamingResponse:
     return StreamingResponse(
-        engine.stream(body.message, body.history), media_type="text/plain; charset=utf-8"
+        engine.stream(body.message, body.history, body.use_memory),
+        media_type="text/plain; charset=utf-8",
     )

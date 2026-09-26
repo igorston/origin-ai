@@ -16,11 +16,14 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
-    ollama_embed_model: str = "nomic-embed-text"
+    ollama_embed_model: str = "bge-m3"
     ollama_temperature: float = 0.7
 
     vector_store: Literal["chroma", "qdrant"] = "chroma"
     chroma_persist_dir: str = "./data/.chroma"
+    memory_collection: str = "origin"
+    memory_top_k: int = 4
+    memory_min_score: float = 0.45
     sqlite_path: str = "./data/origin.db"
 
 

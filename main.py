@@ -14,9 +14,10 @@ import uvicorn
 from fastapi import FastAPI
 
 from origin import __version__
-from origin.api.routes import chat, health
+from origin.api.routes import chat, health, memory
 from origin.config import get_settings
 from origin.core import LLMEngine
+from origin.memory import VectorMemory
 
 settings = get_settings()
 
@@ -29,8 +30,15 @@ logger = logging.getLogger("origin")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.engine = LLMEngine.from_settings(settings)
-    logger.info("Origin Core Initialized (v%s) | model=%s", __version__, settings.ollama_model)
+    app.state.memory = VectorMemory.from_settings(settings)
+    app.state.engine = LLMEngine.from_settings(settings, memory=app.state.memory)
+    logger.info(
+        "Origin Core Initialized (v%s) | model=%s | embeddings=%s | memories=%d",
+        __version__,
+        settings.ollama_model,
+        settings.ollama_embed_model,
+        app.state.memory.count(),
+    )
     yield
     logger.info("Origin Core shutting down")
 
@@ -43,6 +51,7 @@ app = FastAPI(
 )
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(memory.router)
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@ pip install -e ".[dev]"
 
 # 4. Modelos locais
 ollama pull llama3.1               # LLM de chat
-ollama pull nomic-embed-text       # embeddings
+ollama pull bge-m3                 # embeddings multilíngues (memória)
 
 # 5. Configuração
 cp .env.example .env
@@ -80,8 +80,28 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 | `/health` | GET | Status e versão |
 | `/chat` | POST | Resposta completa `{response, model}` |
 | `/chat/stream` | POST | Resposta em streaming (`text/plain`) |
+| `/memory` | POST | Salva fatos na memória de longo prazo `{texts, metadata?}` |
+| `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` |
+| `/memory/{id}` | DELETE | Remove uma memória |
+| `/memory/stats` | GET | Total de memórias na coleção |
 
-O corpo aceita `message` e um `history` opcional (`[{"role": "user" \| "assistant", "content": "..."}]`).
+O corpo do chat aceita `message`, um `history` opcional (`[{"role": "user" \| "assistant", "content": "..."}]`) e `use_memory` (padrão `true`).
+
+### Memória de longo prazo (RAG)
+
+A cada mensagem, o Origin busca na memória vetorial local (Chroma em `data/.chroma`) os fatos mais relevantes e os injeta no prompt de sistema. Só entram fatos com similaridade de cosseno ≥ `MEMORY_MIN_SCORE` (padrão `0.45`), no máximo `MEMORY_TOP_K` (padrão `4`).
+
+```bash
+curl -X POST http://127.0.0.1:8000/memory \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["Meu cachorro se chama Thor."], "metadata": {"source": "manual"}}'
+
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Como se chama meu cachorro?"}'
+```
+
+> O modelo de embeddings padrão é o `bge-m3` porque é multilíngue. Em testes com textos em português, o `nomic-embed-text` não separava fatos relevantes de irrelevantes. Se trocar de modelo, recalibre o `MEMORY_MIN_SCORE` e recrie a coleção, porque vetores de modelos diferentes não são compatíveis.
 
 ```bash
 pytest                  # todos os testes (integração é pulada se o Ollama estiver offline)
@@ -143,7 +163,7 @@ origin-ai/
 
 - [x] Estrutura base e entry point
 - [x] Engine LLM com Ollama + streaming
-- [ ] Memória vetorial local (Chroma)
+- [x] Memória vetorial local (Chroma)
 - [ ] Sistema de tools plugáveis
 - [ ] Agente de automação de código
 - [ ] CLI / interface web

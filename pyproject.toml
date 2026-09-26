@@ -30,6 +30,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 markers = ["integration: requires a running local Ollama server"]
+filterwarnings = ["ignore::DeprecationWarning:chromadb.*"]
 
 [tool.ruff]
 line-length = 100
