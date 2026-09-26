@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     tools_enabled: bool = True
     tools_disabled: list[str] = []
     agent_max_tool_iterations: int = 5
+    # Extra "decide tools first" turn; fixes compound questions on small models (~+0.4s).
+    agent_tool_routing: bool = True
     sqlite_path: str = "./data/origin.db"
 
 

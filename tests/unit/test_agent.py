@@ -17,7 +17,7 @@ def explode() -> str:
     raise RuntimeError("boom")
 
 
-def make_engine(*responses: AIMessage, max_iterations: int = 5) -> LLMEngine:
+def make_engine(*responses: AIMessage, max_iterations: int = 5, routing: bool = False) -> LLMEngine:
     model = ScriptedChatModel(responses=list(responses))
     return LLMEngine(
         model,
@@ -25,6 +25,7 @@ def make_engine(*responses: AIMessage, max_iterations: int = 5) -> LLMEngine:
         model_name="scripted",
         tools={t.name: t for t in (echo, explode)},
         max_tool_iterations=max_iterations,
+        tool_routing=routing,
     )
 
 
@@ -73,6 +74,38 @@ async def test_use_tools_false_skips_binding_and_tool_prompt() -> None:
     assert result.text == "plain"
     assert engine.model.bound_tools == []
     assert engine.model.received[0][0].content == "sys"
+
+
+async def test_routing_turn_runs_tools_before_answering() -> None:
+    engine = make_engine(tool_call("echo", {"text": "a"}), AIMessage("answer"), routing=True)
+
+    result = await engine.generate("q", use_memory=False)
+
+    routing_call, answer_call = engine.model.received
+    assert "## Routing step" in routing_call[0].content
+    assert "## Routing step" not in answer_call[0].content
+    assert isinstance(answer_call[-1], ToolMessage)
+    assert result.text == "answer"
+    assert [c.name for c in result.tool_calls] == ["echo"]
+
+
+async def test_routing_text_is_discarded_when_no_tool_is_needed() -> None:
+    engine = make_engine(AIMessage("NONE"), AIMessage("answer"), routing=True)
+
+    result = await engine.generate("q", use_memory=False)
+
+    assert result.text == "answer"
+    assert result.tool_calls == []
+    assert len(engine.model.received[1]) == 2  # system + user, no routing leftovers
+
+
+async def test_routing_counts_toward_iteration_limit() -> None:
+    engine = make_engine(tool_call("echo", {"text": "x"}), max_iterations=2, routing=True)
+
+    result = await engine.generate("loop", use_memory=False)
+
+    assert len(result.tool_calls) == 2
+    assert len(engine.model.received) == 3
 
 
 async def test_stream_yields_only_text() -> None:

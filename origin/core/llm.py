@@ -40,6 +40,7 @@ class LLMEngine:
         memory_min_score: float = 0.45,
         tools: Mapping[str, BaseTool] | None = None,
         max_tool_iterations: int = 5,
+        tool_routing: bool = False,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -49,6 +50,7 @@ class LLMEngine:
         self.memory_min_score = memory_min_score
         self.tools = dict(tools or {})
         self.max_tool_iterations = max_tool_iterations
+        self.tool_routing = tool_routing
 
     @classmethod
     def from_settings(
@@ -72,6 +74,7 @@ class LLMEngine:
             memory_min_score=settings.memory_min_score,
             tools=tools,
             max_tool_iterations=settings.agent_max_tool_iterations,
+            tool_routing=settings.agent_tool_routing,
         )
 
     def _bind_tools(
@@ -127,7 +130,22 @@ class LLMEngine:
         bound, tools = self._bind_tools(use_tools)
         messages = await self._build_messages(message, history, use_memory, bool(tools))
 
-        for iteration in range(self.max_tool_iterations + 1):
+        first_iteration = 0
+        if tools and self.tool_routing:
+            # Small models stop calling tools once they start writing text, so for compound
+            # messages they answer the easy part and drop the rest. A dedicated routing turn,
+            # where answering is not allowed, makes them commit to every needed tool first.
+            system = f"{messages[0].content}\n\n{load_prompt('tool_routing')}"
+            decision = await bound.ainvoke([SystemMessage(system), *messages[1:]])
+            if decision.tool_calls:
+                messages.append(AIMessage("", tool_calls=decision.tool_calls))
+                tool_messages, records = await execute_tool_calls(decision.tool_calls, tools)
+                messages.extend(tool_messages)
+                for record in records:
+                    yield record
+                first_iteration = 1
+
+        for iteration in range(first_iteration, self.max_tool_iterations + 1):
             # On the last iteration drop the tools so the model is forced to answer.
             final = iteration == self.max_tool_iterations
             model = self.model if final else bound

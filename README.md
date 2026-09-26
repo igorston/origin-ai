@@ -132,7 +132,25 @@ def get_tools(ctx) -> list[BaseTool]:  # ctx.settings, ctx.memory
 
 A docstring é o que o modelo lê para decidir quando usar a tool, então diga claramente **quando** usar e **quando não** usar. Para desativar tools sem apagar código, use `TOOLS_DISABLED='["remember"]'`, ou `TOOLS_ENABLED=false` para desligar todas.
 
-> **Por que qwen3:8b?** Num benchmark com 9 mensagens em português, o `qwen3:8b` acertou 9/9 as decisões de usar ou não uma tool. O `llama3.1` acertou 4/9, porque chamava tools até para "Oi, tudo bem?". Mesmo assim, modelos de 8B às vezes falham em perguntas compostas ("X **e** Y?"); nesse caso, divida em duas mensagens.
+> **Por que qwen3:8b?** Num benchmark com 9 mensagens em português, o `qwen3:8b` acertou 9/9 as decisões de usar ou não uma tool. O `llama3.1` acertou 4/9, porque chamava tools até para "Oi, tudo bem?".
+
+**Etapa de roteamento (`AGENT_TOOL_ROUTING`).** Modelos pequenos param de chamar tools assim que começam a escrever texto. Em perguntas compostas ("Qual a capital da França **e** que dia é hoje?"), eles respondiam a parte fácil e inventavam ou pulavam a outra. Por isso, antes de responder, o agente faz um turno dedicado em que o modelo só pode chamar tools ou dizer `NONE`. Com os mesmos modelos:
+
+| Configuração | Simples | Compostas | Latência mediana |
+|---|---|---|---|
+| Sem roteamento | 35/35 | 25/40 | 1,3 s |
+| `OLLAMA_REASONING=true` (thinking) | — | 12/15 | 15,9 s |
+| **Roteamento (padrão)** | **40/40** | **40/40** | **1,8 s** |
+
+### Avaliação do agente
+
+`scripts/eval_agent.py` roda casos reais, simples e compostos, contra os modelos locais, cada um com uma memória isolada. Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
+
+```bash
+python scripts/eval_agent.py                          # configuração atual, 3 runs por caso
+python scripts/eval_agent.py --runs 5 --only compound
+python scripts/eval_agent.py --model llama3.1 --routing false -v
+```
 
 ```bash
 pytest                  # todos os testes (integração é pulada se o Ollama estiver offline)
