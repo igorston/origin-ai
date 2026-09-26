@@ -3,8 +3,11 @@ import tempfile
 from collections.abc import Iterator
 from uuid import uuid4
 
-# Keep the app's persistent Chroma store out of ./data while tests run.
-os.environ.setdefault("CHROMA_PERSIST_DIR", tempfile.mkdtemp(prefix="origin-test-chroma-"))
+# Keep the app's persistent stores out of ./data and skip model warmup while tests run.
+_tmp = tempfile.mkdtemp(prefix="origin-test-")
+os.environ.setdefault("CHROMA_PERSIST_DIR", os.path.join(_tmp, "chroma"))
+os.environ.setdefault("SQLITE_PATH", os.path.join(_tmp, "origin.db"))
+os.environ.setdefault("OLLAMA_WARMUP", "false")
 
 import chromadb  # noqa: E402
 import pytest  # noqa: E402

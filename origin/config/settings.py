@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     ollama_temperature: float = 0.7
     # None = model default; False disables "thinking" on reasoning models (e.g. qwen3).
     ollama_reasoning: bool | None = False
+    # Seconds Ollama keeps models loaded after the last request (-1 = forever).
+    ollama_keep_alive: int = 1800
+    # Preload models on startup so the first request does not pay the load time.
+    ollama_warmup: bool = True
 
     vector_store: Literal["chroma", "qdrant"] = "chroma"
     chroma_persist_dir: str = "./data/.chroma"

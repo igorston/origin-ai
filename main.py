@@ -6,6 +6,7 @@ Run:
     uvicorn main:app --reload
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,9 +15,11 @@ import uvicorn
 from fastapi import FastAPI
 
 from origin import __version__
+from origin.api.errors import register_error_handlers
 from origin.api.routes import chat, health, memory, tools
 from origin.config import get_settings
 from origin.core import LLMEngine
+from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
 
@@ -50,7 +53,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.memory.count(),
         ",".join(registry.tools) or "none",
     )
+
+    ollama = await check_ollama(settings)
+    if not ollama.reachable:
+        logger.warning("Ollama is not reachable at %s; chat will fail until it is", ollama.url)
+    elif missing := [name for name, ok in ollama.models.items() if not ok]:
+        logger.warning("Missing Ollama models: %s (run `ollama pull <model>`)", ", ".join(missing))
+
+    warmup_task = (
+        asyncio.create_task(warmup(settings)) if settings.ollama_warmup and ollama.healthy else None
+    )
     yield
+    if warmup_task:
+        warmup_task.cancel()
     logger.info("Origin Core shutting down")
 
 
@@ -60,6 +75,7 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan,
 )
+register_error_handlers(app)
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(memory.router)

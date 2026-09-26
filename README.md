@@ -77,7 +77,7 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
-| `/health` | GET | Status e versão |
+| `/health` | GET | Status, versão e estado do Ollama/modelos (503 se degradado) |
 | `/chat` | POST | Resposta completa `{response, model, tool_calls}` |
 | `/chat/stream` | POST | Resposta em streaming (`text/plain`) |
 | `/memory` | POST | Salva fatos na memória de longo prazo `{texts, metadata?}` |

@@ -64,6 +64,7 @@ class LLMEngine:
             base_url=settings.ollama_base_url,
             temperature=settings.ollama_temperature,
             reasoning=settings.ollama_reasoning,
+            keep_alive=settings.ollama_keep_alive,
         )
         return cls(
             model,

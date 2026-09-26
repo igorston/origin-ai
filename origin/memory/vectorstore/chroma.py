@@ -42,7 +42,9 @@ class VectorMemory:
             settings=ChromaSettings(anonymized_telemetry=False),
         )
         embeddings = OllamaEmbeddings(
-            model=settings.ollama_embed_model, base_url=settings.ollama_base_url
+            model=settings.ollama_embed_model,
+            base_url=settings.ollama_base_url,
+            keep_alive=settings.ollama_keep_alive,
         )
         return cls(embeddings, client, settings.memory_collection)
 
