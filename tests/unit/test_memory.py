@@ -26,6 +26,59 @@ async def test_search_filters_by_min_score(memory: VectorMemory) -> None:
     assert [h.content for h in hits] == ["alpha"]
 
 
+async def test_add_skips_near_duplicates(memory: VectorMemory) -> None:
+    first = await memory.add(["Meu time é o Sport."])
+    again = await memory.add(["Meu time é o Sport."])
+    assert again == first
+    assert memory.count() == 1
+
+    await memory.add(["Meu time é o Sport."], dedup=False)
+    assert memory.count() == 2
+
+
+async def test_archive_hides_from_recall_until_restored(memory: VectorMemory) -> None:
+    (old_id,) = await memory.add(["Moro em Recife."])
+
+    memory.archive(old_id, superseded_by="new-id")
+
+    assert await memory.search("Moro em Recife.") == []
+    (archived,) = await memory.search("Moro em Recife.", include_archived=True)
+    assert archived.metadata["archived"] is True
+    assert archived.metadata["superseded_by"] == "new-id"
+    assert memory.count() == 1
+    assert memory.count(include_archived=False) == 0
+    assert await memory.add(["Moro em Recife."]) != [old_id]  # archived is not a duplicate
+
+    assert memory.restore(old_id) is True
+    assert old_id in [h.id for h in await memory.search("Moro em Recife.", k=2)]
+    assert memory.restore("missing") is False
+
+
+async def test_records_are_newest_first(memory: VectorMemory) -> None:
+    await memory.add(["first"])
+    await memory.add(["second"])
+    assert [r.content for r in memory.records()] == ["second", "first"]
+    assert [r.content for r in memory.records(limit=1, offset=1)] == ["first"]
+
+
+def test_memory_api_list_restore_and_stats(client: TestClient, memory: VectorMemory) -> None:
+    (memory_id,) = client.post("/memory", json={"texts": ["Moro em Recife."]}).json()["ids"]
+    memory.archive(memory_id)
+
+    assert client.get("/memory/stats").json() == {
+        "collection": memory.collection,
+        "count": 1,
+        "active": 0,
+        "archived": 1,
+    }
+    assert client.get("/memory").json()[0]["metadata"]["archived"] is True
+
+    restored = client.post(f"/memory/{memory_id}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["metadata"]["archived"] is False
+    assert client.post("/memory/nope/restore").status_code == 404
+
+
 def test_memory_api_roundtrip(client: TestClient) -> None:
     created = client.post(
         "/memory", json={"texts": ["Prefiro Python"], "metadata": {"tag": "pref"}}

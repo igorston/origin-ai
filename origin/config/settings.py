@@ -33,12 +33,18 @@ class Settings(BaseSettings):
     memory_min_score: float = 0.45
     # Also search memory with the previous exchange, so follow-ups ("and hers?") find facts.
     memory_contextual_recall: bool = True
+    # Calibrated on bge-m3: paraphrases score >= ~0.90, contradictions ~0.74-0.87,
+    # merely related facts ~0.62-0.70. Recalibrate if you change the embedding model.
+    memory_dedup_threshold: float = 0.92
+    memory_conflict_threshold: float = 0.72
 
     tools_enabled: bool = True
     tools_disabled: list[str] = []
     agent_max_tool_iterations: int = 5
     # Extra "decide tools first" turn; fixes compound questions on small models (~+0.4s).
     agent_tool_routing: bool = True
+    # Choosing tools is classification: sampling noise there only causes skipped tools.
+    agent_routing_temperature: float = 0.0
     sqlite_path: str = "./data/origin.db"
     # Most recent stored messages sent to the model as context for a session.
     session_history_limit: int = 20

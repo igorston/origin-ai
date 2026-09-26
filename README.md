@@ -82,10 +82,12 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 | `/chat/stream` | POST | Resposta em streaming (`text/plain`) |
 | `/sessions` | POST / GET | Cria uma conversa / lista as conversas (mais recentes primeiro) |
 | `/sessions/{id}` | GET / DELETE | Conversa com todas as mensagens / apaga a conversa |
-| `/memory` | POST | Salva fatos na memória de longo prazo `{texts, metadata?}` |
-| `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` |
+| `/memory` | POST | Salva fatos `{texts, metadata?}` (quase-duplicatas não são salvas de novo) |
+| `/memory` | GET | Lista todas as memórias, as mais novas primeiro (`?limit=&offset=`) |
+| `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` (ignora arquivadas) |
 | `/memory/{id}` | DELETE | Remove uma memória |
-| `/memory/stats` | GET | Total de memórias na coleção |
+| `/memory/{id}/restore` | POST | Restaura uma memória arquivada |
+| `/memory/stats` | GET | Total, ativas e arquivadas |
 | `/tools` | GET | Tools carregadas (nome, descrição, argumentos) |
 
 O corpo do chat aceita `message`, `use_memory` e `use_tools` (ambos com padrão `true`) e **uma** das formas de contexto:
@@ -117,6 +119,16 @@ curl -X POST http://127.0.0.1:8000/chat \
   -d '{"message": "Como se chama meu cachorro?"}'
 ```
 
+**Duplicatas e fatos desatualizados.** Ao salvar um fato, o Origin o compara com o que já existe (limiares calibrados com o bge-m3):
+
+| Similaridade | O que acontece |
+|---|---|
+| ≥ `MEMORY_DEDUP_THRESHOLD` (0,92) | É o mesmo fato: não salva de novo |
+| ≥ `MEMORY_CONFLICT_THRESHOLD` (0,72) | Uma pergunta de sim/não ao modelo (temperatura 0, ~0,1 s) decide se o fato novo substitui o antigo. "Meu time é o Náutico" substitui "Meu time é o Sport"; "Minha filha se chama Laura" **não** substitui "Meu filho se chama Pedro" |
+| abaixo | Fatos independentes |
+
+Fatos substituídos são **arquivados**, não apagados: saem da busca, mas continuam em `GET /memory` e podem ser restaurados com `POST /memory/{id}/restore`. A pergunta foi escrita para errar para o lado seguro. Num teste com 19 pares, ela não teve nenhum falso positivo (nunca substituiu um fato ainda verdadeiro), mas deixou passar 3 substituições reais. Para esquecer algo de propósito ("esquece aquilo da alergia"), existe a tool `forget`, que apaga de verdade.
+
 > O modelo de embeddings padrão é o `bge-m3` porque é multilíngue. Em testes com textos em português, o `nomic-embed-text` não separava fatos relevantes de irrelevantes. Se trocar de modelo, recalibre o `MEMORY_MIN_SCORE` e recrie a coleção, porque vetores de modelos diferentes não são compatíveis.
 
 ### Tools (agente)
@@ -125,7 +137,8 @@ O modelo decide sozinho quando chamar uma tool. O Origin executa a chamada, devo
 
 | Tool | O que faz |
 |------|-----------|
-| `remember` | Salva um fato sobre você na memória de longo prazo ("Lembre que...") |
+| `remember` | Salva um fato sobre você ("Lembre que...", "Mudei de..."), sem duplicar e arquivando o que ficou desatualizado |
+| `forget` | Apaga uma memória por id ou descrição ("Esquece aquilo da...") |
 | `get_current_datetime` | Data, hora e dia da semana locais, no idioma de `ORIGIN_LOCALE` |
 | `days_until` | Dias até uma data (`MM-DD` = próxima ocorrência, ou `YYYY-MM-DD`) |
 
@@ -157,9 +170,15 @@ A docstring é o que o modelo lê para decidir quando usar a tool, então diga c
 | `OLLAMA_REASONING=true` (thinking) | — | 12/15 | 15,9 s |
 | **Roteamento (padrão)** | **40/40** | **40/40** | **1,8 s** |
 
+A etapa de roteamento roda com temperatura 0 (`AGENT_ROUTING_TEMPERATURE`), porque decidir quais tools chamar é uma classificação e a aleatoriedade ali só faz o modelo pular tools. Com 10 runs das perguntas compostas, o resultado foi 78/80 com 0,7 e 80/80 com 0.
+
+**Verificação de afirmações.** Às vezes o modelo diz "anotei!" sem ter chamado o `remember`. Se a resposta final afirma um efeito (salvar, apagar) cuja tool não rodou naquele turno, o agente faz um turno curto de verificação: o modelo chama a tool agora, para a afirmação virar verdade, ou responde `NONE`. O turno extra só acontece quando uma dessas afirmações aparece.
+
+**Idioma.** As saídas das tools são em inglês e são a última coisa que o modelo lê antes de responder, o que fazia modelos pequenos responderem em inglês. Por isso, o agente anexa à saída um lembrete que cita a mensagem do próprio usuário.
+
 ### Avaliação do agente
 
-`scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma) e `followup` (recuperar fatos pelo contexto). Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
+`scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma), `memory` (duplicatas, substituições e esquecimento) e `followup` (recuperar fatos pelo contexto). Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
 
 ```bash
 python scripts/eval_agent.py                          # configuração atual, 3 runs por caso

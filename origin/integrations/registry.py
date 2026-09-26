@@ -11,6 +11,7 @@ import pkgutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from origin.config import Settings
@@ -27,6 +28,8 @@ class ToolContext:
 
     settings: Settings
     memory: VectorMemory | None = None
+    # Deterministic (temperature 0) model for small classification calls made inside tools.
+    llm: BaseChatModel | None = None
 
 
 class ToolRegistry:

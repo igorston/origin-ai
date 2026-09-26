@@ -5,14 +5,21 @@ from itertools import chain
 from typing import Literal
 
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+)
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from origin.config import Settings
-from origin.core.agent import ToolCallRecord, execute_tool_calls
+from origin.core.agent import ToolCallRecord, execute_tool_calls, unbacked_claims
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
 
@@ -20,6 +27,27 @@ logger = logging.getLogger(__name__)
 
 # How much of the previous exchange is prepended to the memory query for follow-ups.
 RECALL_CONTEXT_CHARS = 500
+
+
+def make_chat_model(settings: Settings, temperature: float | None = None) -> ChatOllama:
+    return ChatOllama(
+        model=settings.ollama_model,
+        base_url=settings.ollama_base_url,
+        temperature=settings.ollama_temperature if temperature is None else temperature,
+        reasoning=settings.ollama_reasoning,
+        keep_alive=settings.ollama_keep_alive,
+    )
+
+
+def remind_language(tool_messages: list[ToolMessage], message: str) -> list[ToolMessage]:
+    """Tool results are English and are the last thing the model reads before replying, which
+    made small models answer in English. Quoting the user's own words anchors the language."""
+    if tool_messages:
+        quote = message if len(message) <= 120 else f"{message[:117]}..."
+        tool_messages[
+            -1
+        ].content += f'\n\n[Reply to the user in the same language as their message: "{quote}"]'
+    return tool_messages
 
 
 class ChatTurn(BaseModel):
@@ -47,6 +75,7 @@ class LLMEngine:
         max_tool_iterations: int = 5,
         tool_routing: bool = False,
         contextual_recall: bool = True,
+        router: BaseChatModel | None = None,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
@@ -58,6 +87,8 @@ class LLMEngine:
         self.max_tool_iterations = max_tool_iterations
         self.tool_routing = tool_routing
         self.contextual_recall = contextual_recall
+        # Model for the routing turn; a deterministic copy makes tool decisions consistent.
+        self.router = router or model
 
     @classmethod
     def from_settings(
@@ -66,15 +97,8 @@ class LLMEngine:
         memory: VectorMemory | None = None,
         tools: Mapping[str, BaseTool] | None = None,
     ) -> "LLMEngine":
-        model = ChatOllama(
-            model=settings.ollama_model,
-            base_url=settings.ollama_base_url,
-            temperature=settings.ollama_temperature,
-            reasoning=settings.ollama_reasoning,
-            keep_alive=settings.ollama_keep_alive,
-        )
         return cls(
-            model,
+            make_chat_model(settings),
             load_prompt("system"),
             settings.ollama_model,
             memory=memory,
@@ -84,6 +108,7 @@ class LLMEngine:
             max_tool_iterations=settings.agent_max_tool_iterations,
             tool_routing=settings.agent_tool_routing,
             contextual_recall=settings.memory_contextual_recall,
+            router=make_chat_model(settings, temperature=settings.agent_routing_temperature),
         )
 
     def _bind_tools(
@@ -156,6 +181,13 @@ class LLMEngine:
         """Agent loop: yields text chunks as they stream and a record per executed tool call."""
         bound, tools = self._bind_tools(use_tools)
         messages = await self._build_messages(message, history, use_memory, bool(tools))
+        executed: list[ToolCallRecord] = []
+
+        async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
+            tool_messages, records = await execute_tool_calls(tool_calls, tools)
+            messages.extend(remind_language(tool_messages, message))
+            executed.extend(records)
+            return records
 
         first_iteration = 0
         if tools and self.tool_routing:
@@ -163,12 +195,11 @@ class LLMEngine:
             # messages they answer the easy part and drop the rest. A dedicated routing turn,
             # where answering is not allowed, makes them commit to every needed tool first.
             system = f"{messages[0].content}\n\n{load_prompt('tool_routing')}"
-            decision = await bound.ainvoke([SystemMessage(system), *messages[1:]])
+            router = self.router.bind_tools(list(tools.values()))
+            decision = await router.ainvoke([SystemMessage(system), *messages[1:]])
             if decision.tool_calls:
                 messages.append(AIMessage("", tool_calls=decision.tool_calls))
-                tool_messages, records = await execute_tool_calls(decision.tool_calls, tools)
-                messages.extend(tool_messages)
-                for record in records:
+                for record in await run_tools(decision.tool_calls):
                     yield record
                 first_iteration = 1
 
@@ -183,17 +214,40 @@ class LLMEngine:
                     yield chunk.text
 
             tool_calls = getattr(response, "tool_calls", None)
-            if not tool_calls or not tools or final:
-                if tool_calls:
-                    logger.warning(
-                        "Tool iteration limit reached; ignoring %d call(s)", len(tool_calls)
-                    )
-                return
-            messages.append(response)
-            tool_messages, records = await execute_tool_calls(tool_calls, tools)
-            messages.extend(tool_messages)
-            for record in records:
-                yield record
+            if tool_calls and tools and not final:
+                messages.append(response)
+                for record in await run_tools(tool_calls):
+                    yield record
+                continue
+
+            if tool_calls:
+                logger.warning("Tool iteration limit reached; ignoring %d call(s)", len(tool_calls))
+            if response is not None and tools:
+                for record in await self._verify_claims(tools, messages, response, executed):
+                    yield record
+            return
+
+    async def _verify_claims(
+        self,
+        tools: Mapping[str, BaseTool],
+        messages: list[BaseMessage],
+        response: BaseMessage,
+        executed: list[ToolCallRecord],
+    ) -> list[ToolCallRecord]:
+        """If the final reply claims an effect ("anotei!") whose tool was never called, give
+        the model one chance to actually call it, so the claim becomes true."""
+        claimed = unbacked_claims(response.text, executed, set(tools))
+        if not claimed:
+            return []
+        logger.warning("Reply claims %s without calling it; verifying", sorted(claimed))
+        check = HumanMessage(load_prompt("claim_check").format(tools=", ".join(sorted(claimed))))
+        router = self.router.bind_tools(list(tools.values()))
+        decision = await router.ainvoke([*messages, AIMessage(response.text), check])
+        calls = [call for call in decision.tool_calls if call["name"] in claimed]
+        if not calls:
+            return []
+        _, records = await execute_tool_calls(calls, tools)
+        return records
 
     async def generate(
         self,

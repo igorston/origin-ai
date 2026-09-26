@@ -18,7 +18,7 @@ from origin import __version__
 from origin.api.errors import register_error_handlers
 from origin.api.routes import chat, health, memory, sessions, tools
 from origin.config import get_settings
-from origin.core import LLMEngine
+from origin.core import LLMEngine, make_chat_model
 from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
@@ -39,7 +39,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sessions = SessionStore(settings.sqlite_path)
     registry = (
         ToolRegistry.discover(
-            ToolContext(settings, app.state.memory), disabled=settings.tools_disabled
+            ToolContext(settings, app.state.memory, llm=make_chat_model(settings, temperature=0)),
+            disabled=settings.tools_disabled,
         )
         if settings.tools_enabled
         else ToolRegistry()

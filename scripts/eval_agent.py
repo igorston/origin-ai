@@ -26,7 +26,7 @@ from chromadb.config import Settings as ChromaSettings  # noqa: E402
 from langchain_ollama import OllamaEmbeddings  # noqa: E402
 
 from origin.config import get_settings  # noqa: E402
-from origin.core import ChatResult, ChatTurn, LLMEngine  # noqa: E402
+from origin.core import ChatResult, ChatTurn, LLMEngine, make_chat_model  # noqa: E402
 from origin.integrations import ToolContext, ToolRegistry  # noqa: E402
 from origin.memory import VectorMemory  # noqa: E402
 
@@ -91,6 +91,11 @@ def portuguese() -> Check:
 def forgotten(needle: str) -> Check:
     """No memory at all (seeded or saved) still contains the needle."""
     return lambda _, memories: not any(needle in text for _, text in memories)
+
+
+def kept(needle: str) -> Check:
+    """A still-true memory was not deleted."""
+    return lambda _, memories: any(needle in text for _, text in memories)
 
 
 def stored_once(needle: str) -> Check:
@@ -233,6 +238,49 @@ CASES = [
             ("assistant", "Guardei: seu aniversário é 10 de março."),
         ],
     ),
+    # memory hygiene: no duplicates, contradictions replace old facts, explicit forgetting
+    Case(
+        "memory",
+        "Lembre que meu time favorito é o Sport.",
+        [stored_once("Sport"), portuguese()],
+        seed=["Meu time favorito é o Sport."],
+    ),
+    Case(
+        "memory",
+        "Mudei de time, agora torço pro Náutico.",
+        [remembered("Náutico"), forgotten("Sport"), portuguese()],
+        seed=["Meu time favorito é o Sport.", "Trabalho como engenheiro de software."],
+    ),
+    Case(
+        "memory",
+        "Me mudei pra São Paulo mês passado, anota aí.",
+        [remembered("São Paulo"), forgotten("Recife"), portuguese()],
+        seed=["Moro em Recife.", "Minha mãe se chama Helena."],
+    ),
+    Case(
+        "memory",
+        "Esquece aquilo da alergia a camarão, era engano.",
+        [forgotten("camarão"), kept("Helena"), portuguese()],
+        seed=["Tenho alergia a camarão.", "Minha mãe se chama Helena."],
+    ),
+    Case(
+        "memory",
+        "Guarda que a Ana faz aniversário em 12 de maio.",
+        [remembered("maio"), kept("esposa se chama Ana"), portuguese()],
+        seed=["Minha esposa se chama Ana."],
+    ),
+    Case(
+        "memory",
+        "Anota que minha filha se chama Laura.",
+        [remembered("Laura"), kept("Pedro"), portuguese()],
+        seed=["Meu filho se chama Pedro."],
+    ),
+    Case(
+        "memory",
+        "Também gosto de pizza de mussarela, guarda aí.",
+        [remembered("mussarela"), kept("calabresa"), portuguese()],
+        seed=["Gosto de pizza de calabresa."],
+    ),
     # follow-up: the fact is only findable with the previous exchange as context
     Case(
         "followup",
@@ -288,7 +336,8 @@ async def run_case(case: Case, settings, embeddings) -> tuple[bool, float, ChatR
     memory = VectorMemory(embeddings, client, f"eval-{uuid4().hex}")
     if case.seed:
         await memory.add(case.seed, {"source": "seed"})
-    tools = ToolRegistry.discover(ToolContext(settings, memory)).tools
+    judge = make_chat_model(settings, temperature=0)
+    tools = ToolRegistry.discover(ToolContext(settings, memory, llm=judge)).tools
     engine = LLMEngine.from_settings(settings, memory=memory, tools=tools)
 
     history = [ChatTurn(role=role, content=content) for role, content in case.history]
@@ -297,9 +346,11 @@ async def run_case(case: Case, settings, embeddings) -> tuple[bool, float, ChatR
     elapsed = time.perf_counter() - start
 
     stored = memory._store.get()
+    # Archived (superseded) memories are out of recall, so they count as forgotten.
     memories = [
         (meta.get("source", ""), text)
         for meta, text in zip(stored["metadatas"], stored["documents"], strict=True)
+        if not meta.get("archived")
     ]
     return all(check(result, memories) for check in case.checks), elapsed, result
 
@@ -311,6 +362,7 @@ async def main() -> None:
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--reasoning", choices=["true", "false", "none"])
     parser.add_argument("--routing", choices=["true", "false"])
+    parser.add_argument("--routing-temperature", type=float)
     parser.add_argument("--contextual-recall", choices=["true", "false"])
     parser.add_argument("--only", choices=sorted({c.group for c in CASES}))
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -325,6 +377,8 @@ async def main() -> None:
         overrides["ollama_reasoning"] = {"true": True, "false": False, "none": None}[args.reasoning]
     if args.routing:
         overrides["agent_tool_routing"] = args.routing == "true"
+    if args.routing_temperature is not None:
+        overrides["agent_routing_temperature"] = args.routing_temperature
     if args.contextual_recall:
         overrides["memory_contextual_recall"] = args.contextual_recall == "true"
     settings = get_settings().model_copy(update=overrides)
@@ -336,6 +390,7 @@ async def main() -> None:
     print(
         f"model={settings.ollama_model} temperature={settings.ollama_temperature} "
         f"reasoning={settings.ollama_reasoning} routing={settings.agent_tool_routing} "
+        f"routing_temperature={settings.agent_routing_temperature} "
         f"contextual_recall={settings.memory_contextual_recall} runs={args.runs}\n"
     )
     await LLMEngine.from_settings(settings).generate("ok", use_memory=False, use_tools=False)

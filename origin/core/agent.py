@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Mapping, Sequence
 
 from langchain_core.messages import ToolCall, ToolMessage
@@ -6,6 +7,34 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# Phrases in a final reply that claim a side effect only a given tool can produce. Small
+# models sometimes say "anotei!" without calling the tool; such replies get verified.
+CLAIMS: dict[str, re.Pattern[str]] = {
+    "remember": re.compile(
+        r"\b(salve[i]?|salv[oa]s?|anotei|anotad[oa]s?|guardei|guardad[oa]s?|registrei|"
+        r"registrad[oa]s?|memorizei|lembrete|vou lembrar|lembrarei|saved|noted|"
+        r"i'?ll remember|i will remember|remembered)\b",
+        re.IGNORECASE,
+    ),
+    "forget": re.compile(
+        r"\b(apaguei|apagad[oa]s?|esqueci|removi|removid[oa]s?|exclu[íi]|exclu[íi]d[oa]s?|"
+        r"deleted|removed|forgot(ten)?)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def unbacked_claims(
+    text: str, executed: Sequence["ToolCallRecord"], available: set[str]
+) -> set[str]:
+    """Tools whose effect the reply claims although they were not called this turn."""
+    called = {record.name for record in executed}
+    return {
+        name
+        for name, pattern in CLAIMS.items()
+        if name in available and name not in called and pattern.search(text)
+    }
 
 
 class ToolCallRecord(BaseModel):

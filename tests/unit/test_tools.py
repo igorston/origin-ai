@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.tools import tool
 
 from origin.config import Settings
@@ -18,12 +19,15 @@ def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(clock, "_now", lambda: FIXED_NOW)
 
 
-def tools_for(memory: VectorMemory | None = None, **settings: object) -> dict:
-    return ToolRegistry.discover(ToolContext(Settings(**settings), memory)).tools
+def tools_for(memory: VectorMemory | None = None, llm: object = None, **settings: object) -> dict:
+    return ToolRegistry.discover(ToolContext(Settings(**settings), memory, llm=llm)).tools
+
+
+BUILTIN_TOOLS = {"remember", "forget", "get_current_datetime", "days_until"}
 
 
 def test_discover_loads_builtin_plugins(memory: VectorMemory) -> None:
-    assert set(tools_for(memory)) == {"remember", "get_current_datetime", "days_until"}
+    assert set(tools_for(memory)) == BUILTIN_TOOLS
 
 
 def test_discover_skips_memory_tools_without_memory() -> None:
@@ -45,10 +49,48 @@ def test_registry_rejects_duplicate_names() -> None:
         ToolRegistry([dup, dup])
 
 
-async def test_remember_saves_to_memory(memory: VectorMemory) -> None:
+async def test_remember_does_not_store_duplicates(memory: VectorMemory) -> None:
+    await memory.add(["Meu time é o Sport."])
     output = await tools_for(memory)["remember"].ainvoke({"fact": "Meu time é o Sport."})
-    assert output.startswith("Saved to long-term memory")
+    assert output.startswith("Already in memory")
     assert memory.count() == 1
+
+
+@pytest.mark.parametrize(("judge_says", "archived"), [("NO", True), ("YES", False)])
+async def test_remember_archives_superseded_memories(
+    memory: VectorMemory, judge_says: str, archived: bool
+) -> None:
+    (old_id,) = await memory.add(["Moro em Recife."])
+    judge = FakeListChatModel(responses=[judge_says])
+    # Fake embeddings are random, so treat every stored memory as similar.
+    tools = tools_for(memory, llm=judge, memory_conflict_threshold=-1.0)
+
+    output = await tools["remember"].ainvoke({"fact": "Moro em São Paulo."})
+
+    assert output.startswith("Saved to long-term memory")
+    assert ("It replaces" in output) is archived
+    assert bool(memory.get(old_id).metadata.get("archived")) is archived
+    assert memory.count() == 2
+
+
+async def test_remember_keeps_memories_when_judge_unavailable(memory: VectorMemory) -> None:
+    (old_id,) = await memory.add(["Moro em Recife."])
+    tools = tools_for(memory, llm=None, memory_conflict_threshold=-1.0)
+
+    await tools["remember"].ainvoke({"fact": "Moro em São Paulo."})
+
+    assert not memory.get(old_id).metadata.get("archived")
+
+
+async def test_forget_by_id_and_by_description(memory: VectorMemory) -> None:
+    first, second = await memory.add(["Tenho alergia a camarão.", "Moro em Recife."])
+    forget = tools_for(memory)["forget"]
+
+    assert "Deleted memory" in await forget.ainvoke({"memory": first})
+    assert "No memory with id" in await forget.ainvoke({"memory": first})
+    assert "Deleted memory" in await forget.ainvoke({"memory": "Moro em Recife."})
+    assert "nothing was deleted" in await forget.ainvoke({"memory": "xyz"})
+    assert memory.count() == 0
 
 
 @pytest.mark.usefixtures("frozen_clock")
@@ -82,5 +124,5 @@ def test_tools_endpoint_lists_engine_tools(
 
     assert response.status_code == 200
     by_name = {t["name"]: t for t in response.json()}
-    assert set(by_name) == {"remember", "get_current_datetime", "days_until"}
+    assert set(by_name) == BUILTIN_TOOLS
     assert "target_date" in by_name["days_until"]["args"]

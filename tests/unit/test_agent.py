@@ -1,7 +1,9 @@
+import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import tool
 
 from origin.core import LLMEngine
+from origin.core.agent import unbacked_claims
 from tests.fakes import ScriptedChatModel, tool_call
 
 
@@ -40,7 +42,10 @@ async def test_tool_loop_executes_call_and_returns_final_answer() -> None:
     ]
     second_call = engine.model.received[1]
     assert isinstance(second_call[-1], ToolMessage)
-    assert second_call[-1].content == "echo: hi"
+    # The model sees the output plus a language reminder; the record keeps the raw output.
+    assert second_call[-1].content == (
+        'echo: hi\n\n[Reply to the user in the same language as their message: "say hi"]'
+    )
     assert engine.model.bound_tools == ["echo", "explode"]
     assert "## Tools" in second_call[0].content
 
@@ -106,6 +111,66 @@ async def test_routing_counts_toward_iteration_limit() -> None:
 
     assert len(result.tool_calls) == 2
     assert len(engine.model.received) == 3
+
+
+@tool
+def remember(fact: str) -> str:
+    """Save a fact."""
+    return f"saved: {fact}"
+
+
+def make_memory_engine(*responses: AIMessage) -> LLMEngine:
+    model = ScriptedChatModel(responses=list(responses))
+    return LLMEngine(model, "sys", "scripted", tools={"remember": remember, "echo": echo})
+
+
+async def test_unbacked_save_claim_gets_verified_and_executed() -> None:
+    engine = make_memory_engine(
+        AIMessage("Pronto, anotei que seu time é o Sport!"),
+        tool_call("remember", {"fact": "Meu time é o Sport."}),
+    )
+
+    result = await engine.generate("Lembra que meu time é o Sport", use_memory=False)
+
+    assert result.text == "Pronto, anotei que seu time é o Sport!"
+    assert [(c.name, c.output) for c in result.tool_calls] == [
+        ("remember", "saved: Meu time é o Sport.")
+    ]
+    check = engine.model.received[1]
+    assert check[-2].content == "Pronto, anotei que seu time é o Sport!"
+    assert "[Automatic check]" in check[-1].content and "remember" in check[-1].content
+
+
+async def test_claim_check_accepts_none_and_ignores_other_tools() -> None:
+    engine = make_memory_engine(AIMessage("Anotado!"), tool_call("echo", {"text": "x"}))
+
+    result = await engine.generate("oi", use_memory=False)
+
+    assert result.tool_calls == []  # only the claimed tool may run during the check
+
+
+async def test_no_check_when_claim_is_backed_or_absent() -> None:
+    backed = make_memory_engine(tool_call("remember", {"fact": "f"}), AIMessage("Anotei!"))
+    await backed.generate("lembra f", use_memory=False)
+    assert len(backed.model.received) == 2  # tool round + answer, no extra check
+
+    plain = make_memory_engine(AIMessage("Paris é a capital da França."))
+    await plain.generate("capital da França?", use_memory=False)
+    assert len(plain.model.received) == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "claimed"),
+    [
+        ("Anotei aqui!", {"remember"}),
+        ("Pronto, salvei na memória.", {"remember"}),
+        ("Okay, I've saved it.", {"remember"}),
+        ("Apaguei essa informação.", {"forget"}),
+        ("A capital é Paris.", set()),
+    ],
+)
+def test_unbacked_claims_detection(text: str, claimed: set[str]) -> None:
+    assert unbacked_claims(text, [], {"remember", "forget"}) == claimed
 
 
 async def test_stream_yields_only_text() -> None:
