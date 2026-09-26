@@ -28,6 +28,8 @@ include = ["origin*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"
+markers = ["integration: requires a running local Ollama server"]
 
 [tool.ruff]
 line-length = 100

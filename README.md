@@ -64,8 +64,29 @@ python main.py
 A API sobe em `http://127.0.0.1:8000` — docs interativas em `/docs` e healthcheck em `/health`.
 
 ```bash
-pytest          # testes
-ruff check .    # lint
+# Resposta completa
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Quem é você?"}'
+
+# Streaming (token a token)
+curl -N -X POST http://127.0.0.1:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Explique RAG em 3 frases.", "history": []}'
+```
+
+| Endpoint | Método | Descrição |
+|----------|--------|-----------|
+| `/health` | GET | Status e versão |
+| `/chat` | POST | Resposta completa `{response, model}` |
+| `/chat/stream` | POST | Resposta em streaming (`text/plain`) |
+
+O corpo aceita `message` e um `history` opcional (`[{"role": "user" \| "assistant", "content": "..."}]`).
+
+```bash
+pytest                  # todos os testes (integração é pulada se o Ollama estiver offline)
+pytest -m "not integration"
+ruff check . && ruff format --check .
 ```
 
 ## Arquitetura
@@ -121,7 +142,7 @@ origin-ai/
 ## Roadmap
 
 - [x] Estrutura base e entry point
-- [ ] Engine LLM com Ollama + streaming
+- [x] Engine LLM com Ollama + streaming
 - [ ] Memória vetorial local (Chroma)
 - [ ] Sistema de tools plugáveis
 - [ ] Agente de automação de código
