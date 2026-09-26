@@ -28,7 +28,7 @@ touch \
   tests/unit/__init__.py tests/integration/__init__.py \
   data/.gitkeep
 
-for f in README.md .gitignore main.py pyproject.toml .env.example; do
+for f in README.md LICENSE NOTICE .gitignore main.py pyproject.toml .env.example; do
   [[ -f "$f" ]] || { echo "ERRO: $f ausente — salve os arquivos base antes." >&2; exit 1; }
 done
 
