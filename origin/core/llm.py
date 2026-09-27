@@ -31,6 +31,13 @@ from origin.core.agent import (
 from origin.core.language import reply_instruction
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
+from origin.retry import (
+    DEFAULT_POLICY,
+    RetryPolicy,
+    call_with_retry,
+    is_mid_stream_failure,
+    ollama_client_kwargs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +90,7 @@ def make_chat_model(settings: Settings, temperature: float | None = None) -> Cha
         temperature=settings.ollama_temperature if temperature is None else temperature,
         reasoning=settings.ollama_reasoning,
         keep_alive=settings.ollama_keep_alive,
+        **ollama_client_kwargs(RetryPolicy.from_settings(settings)),
     )
 
 
@@ -121,8 +129,10 @@ class LLMEngine:
         tool_routing: bool = False,
         contextual_recall: bool = True,
         router: BaseChatModel | None = None,
+        retry: RetryPolicy = DEFAULT_POLICY,
     ) -> None:
         self.model = model
+        self.retry = retry
         self.system_prompt = system_prompt
         self.model_name = model_name
         self.memory = memory
@@ -154,6 +164,7 @@ class LLMEngine:
             tool_routing=settings.agent_tool_routing,
             contextual_recall=settings.memory_contextual_recall,
             router=make_chat_model(settings, temperature=settings.agent_routing_temperature),
+            retry=RetryPolicy.from_settings(settings),
         )
 
     def _bind_tools(
@@ -251,7 +262,9 @@ class LLMEngine:
                 routing = HumanMessage(f"{latest.content}\n\n{load_prompt('tool_routing')}")
                 router = self.router.bind_tools(list(tools.values()))
                 with timings.phase("routing"):
-                    decision = await router.ainvoke([*messages[:-1], routing])
+                    decision = await call_with_retry(
+                        lambda: router.ainvoke([*messages[:-1], routing]), self.retry, "routing"
+                    )
                 calls = [
                     call
                     for call in decision.tool_calls
@@ -268,12 +281,29 @@ class LLMEngine:
                 # On the last iteration drop the tools so the model is forced to answer.
                 final = iteration == self.max_tool_iterations
                 model = self.model if final else bound
-                response = None
-                async for chunk in model.astream(messages):
-                    response = chunk if response is None else response + chunk
-                    if chunk.text:
-                        timings.first_token()
-                        yield chunk.text
+                for attempt in range(1, self.retry.attempts + 1):
+                    response = None
+                    emitted = False
+                    try:
+                        async for chunk in model.astream(messages):
+                            response = chunk if response is None else response + chunk
+                            if chunk.text:
+                                emitted = True
+                                timings.first_token()
+                                yield chunk.text
+                        break
+                    except Exception as exc:
+                        # Once text reached the user a retry would splice two different
+                        # replies together, so only a failure before the first token
+                        # (or during a silent tool-call turn) is retried.
+                        last = attempt == self.retry.attempts
+                        if emitted or last or not is_mid_stream_failure(exc):
+                            raise
+                        logger.warning(
+                            "Reply stream failed before any text (%s); retry %d/%d",
+                            str(exc)[:160], attempt, self.retry.attempts - 1,
+                        )  # fmt: skip
+                        await asyncio.sleep(self.retry.delay(attempt))
 
                 tool_calls = getattr(response, "tool_calls", None)
                 if tool_calls and tools and not final:
@@ -313,7 +343,11 @@ class LLMEngine:
         logger.warning("Reply claims %s without calling it; verifying", sorted(claimed))
         check = HumanMessage(load_prompt("claim_check").format(tools=", ".join(sorted(claimed))))
         router = self.router.bind_tools(list(tools.values()))
-        decision = await router.ainvoke([*messages, AIMessage(response.text), check])
+        decision = await call_with_retry(
+            lambda: router.ainvoke([*messages, AIMessage(response.text), check]),
+            self.retry,
+            "claim check",
+        )
         calls = [call for call in decision.tool_calls if call["name"] in claimed]
         if not calls:
             return []

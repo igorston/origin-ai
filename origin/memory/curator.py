@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from origin.core.language import detect_language
 from origin.memory.vectorstore import MemoryHit, MemoryRecord, MetadataValue, VectorMemory
 from origin.prompts import load_prompt
+from origin.retry import DEFAULT_POLICY, RetryPolicy, call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,9 @@ class MemoryCurator:
         llm: BaseChatModel | None,
         conflict_threshold: float = 0.55,
         conflict_candidates: int = 3,
+        retry: RetryPolicy = DEFAULT_POLICY,
     ) -> None:
+        self.retry = retry
         self.memory = memory
         self.llm = llm
         self.conflict_threshold = conflict_threshold
@@ -165,7 +168,10 @@ class MemoryCurator:
             prompt = f"{head}Facts (in {language}, like the note):{tail}"
         for attempt in range(2):
             try:
-                facts = parse_facts((await self.llm.ainvoke(prompt)).text)
+                reply = await call_with_retry(
+                    lambda p=prompt: self.llm.ainvoke(p), self.retry, "memory normalization"
+                )
+                facts = parse_facts(reply.text)
             except Exception:
                 logger.warning("Memory normalization failed; storing as written", exc_info=True)
                 return [note]
@@ -193,7 +199,10 @@ class MemoryCurator:
             return False
         prompt = load_prompt("memory_conflict").format(old=old, new=new)
         try:
-            answer = (await self.llm.ainvoke(prompt)).text.strip().upper()
+            reply = await call_with_retry(
+                lambda: self.llm.ainvoke(prompt), self.retry, "memory conflict check"
+            )
+            answer = reply.text.strip().upper()
         except Exception:
             logger.warning("Memory conflict check failed; keeping %r", old, exc_info=True)
             return False

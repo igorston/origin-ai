@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from langchain_core.tools import BaseTool, tool
 
 from origin.memory.curator import CurationResult, MemoryCurator
+from origin.retry import RetryPolicy
 
 if TYPE_CHECKING:
     from origin.integrations.registry import ToolContext
@@ -21,7 +22,12 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
     if ctx.memory is None:
         return []
     store = ctx.memory
-    curator = MemoryCurator(store, ctx.llm, ctx.settings.memory_conflict_threshold)
+    curator = MemoryCurator(
+        store,
+        ctx.llm,
+        ctx.settings.memory_conflict_threshold,
+        retry=RetryPolicy.from_settings(ctx.settings),
+    )
 
     @tool
     async def remember(fact: str) -> str:

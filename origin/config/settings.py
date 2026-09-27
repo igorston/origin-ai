@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     ollama_keep_alive: int = 1800
     # Preload models on startup so the first request does not pay the load time.
     ollama_warmup: bool = True
+    # Retries for transient Ollama failures (runner briefly unreachable, 503, dropped
+    # connection). Total tries per request; the wait doubles from the backoff each time.
+    ollama_retry_attempts: int = 3
+    ollama_retry_backoff: float = 0.5
 
     vector_store: Literal["chroma", "qdrant"] = "chroma"
     chroma_persist_dir: str = "./data/.chroma"

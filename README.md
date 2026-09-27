@@ -246,6 +246,17 @@ A etapa de roteamento roda com temperatura 0 (`AGENT_ROUTING_TEMPERATURE`), porq
 - uma instrução em inglês ("reply in Portuguese") ainda puxava palavras em inglês ("algo else");
 - uma frase de exemplo na instrução fazia o modelo copiar os fatos do exemplo para respostas reais.
 
+### Falhas transitórias do Ollama
+
+Durante os testes, o processo que executa o modelo no Ollama (`llama-server`) caiu várias vezes e se recuperou sozinho segundos depois. O Origin tenta de novo automaticamente, em duas camadas (`OLLAMA_RETRY_ATTEMPTS=3`, espera de `OLLAMA_RETRY_BACKOFF=0.5` s que dobra a cada tentativa):
+
+| Falha | Onde é tratada | Como |
+|---|---|---|
+| Resposta 500 no início da requisição (`health resp ... connectex`), 503, conexão recusada ou perdida | Transporte HTTP (`origin/retry.py`), usado por todos os clientes: chat, roteador, juiz e embeddings, síncronos e assíncronos | Reenvia a requisição. Erros reais, como modelo inexistente ou requisição inválida, não são repetidos |
+| O processo morre **no meio** da resposta (`error reading llama-server response ... wsarecv`), depois de o Ollama já ter respondido 200 | Chamadas ao modelo | Chamadas internas (roteamento, juiz, normalização, verificação de afirmações) são repetidas inteiras. A resposta ao usuário só é repetida se **nenhum token** tiver sido enviado; se já saiu texto, o erro aparece, para nunca juntar duas respostas diferentes |
+
+As camadas não se multiplicam: a segunda só trata falhas no meio do stream, porque as do início já foram repetidas pelo transporte. Num teste real, encerrando o `llama-server` durante uma geração, a chamada **falhou em 1,3 s sem retentativa** e **completou em 11,3 s com retentativa** (o Ollama recarrega o modelo nesse intervalo).
+
 ### Latência
 
 Cada turno registra no log o tempo de cada fase (`Turn timings: context=… routing=… tools=… first_token=…`). Três correções saíram dessas medições:

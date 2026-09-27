@@ -24,6 +24,7 @@ from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
 from origin.memory.curator import MemoryCurator
 from origin.memory.storage import SessionStore
+from origin.retry import RetryPolicy
 from origin.web import mount_web
 
 settings = get_settings()
@@ -40,7 +41,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory = VectorMemory.from_settings(settings)
     app.state.sessions = SessionStore(settings.sqlite_path)
     judge = make_chat_model(settings, temperature=0)
-    app.state.curator = MemoryCurator(app.state.memory, judge, settings.memory_conflict_threshold)
+    app.state.curator = MemoryCurator(
+        app.state.memory,
+        judge,
+        settings.memory_conflict_threshold,
+        retry=RetryPolicy.from_settings(settings),
+    )
     registry = (
         ToolRegistry.discover(
             ToolContext(settings, app.state.memory, llm=judge),

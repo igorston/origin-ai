@@ -13,6 +13,7 @@ from langchain_ollama import OllamaEmbeddings
 from pydantic import BaseModel
 
 from origin.config import Settings
+from origin.retry import RetryPolicy, ollama_client_kwargs
 
 MetadataValue = str | int | float | bool
 
@@ -61,6 +62,7 @@ class VectorMemory:
             model=settings.ollama_embed_model,
             base_url=settings.ollama_base_url,
             keep_alive=settings.ollama_keep_alive,
+            **ollama_client_kwargs(RetryPolicy.from_settings(settings)),
         )
         return cls(embeddings, client, settings.memory_collection, settings.memory_dedup_threshold)
 
