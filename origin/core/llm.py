@@ -32,7 +32,8 @@ from origin.core.agent import (
     unbacked_claims,
 )
 from origin.core.context import JSON_CHARS_PER_TOKEN, estimate_tokens
-from origin.core.language import reply_instruction
+from origin.core.language import LANGUAGE_NAMES, detect_language, reply_instruction
+from origin.core.script_guard import ScriptGuard, guard_needed
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
 from origin.retry import (
@@ -143,8 +144,10 @@ class LLMEngine:
         contextual_recall: bool = True,
         router: BaseChatModel | None = None,
         retry: RetryPolicy = DEFAULT_POLICY,
+        locale: str = "en-US",
     ) -> None:
         self.model = model
+        self.locale = locale
         self.retry = retry
         self.system_prompt = system_prompt
         self.model_name = model_name
@@ -178,6 +181,7 @@ class LLMEngine:
             contextual_recall=settings.memory_contextual_recall,
             router=make_chat_model(settings, temperature=settings.agent_routing_temperature),
             retry=RetryPolicy.from_settings(settings),
+            locale=settings.origin_locale,
         )
 
     def _bind_tools(
@@ -265,6 +269,10 @@ class LLMEngine:
                 message, history, use_memory, bool(tools), summary
             )
         executed: list[ToolCallRecord] = []
+        guarded = guard_needed(message)
+
+        async def repair(context: str, fragment: str) -> str:
+            return await self._repair_script(context, fragment, message)
 
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
             with timings.phase("tools"):
@@ -305,13 +313,21 @@ class LLMEngine:
                 for attempt in range(1, self.retry.attempts + 1):
                     response = None
                     emitted = False
+                    guard = ScriptGuard(repair) if guarded else None
                     try:
                         async for chunk in model.astream(messages):
                             response = chunk if response is None else response + chunk
                             if chunk.text:
                                 emitted = True
                                 timings.first_token()
-                                yield chunk.text
+                                if guard is None:
+                                    yield chunk.text
+                                    continue
+                                async for text in guard.feed(chunk.text):
+                                    yield text
+                        if guard is not None:
+                            async for text in guard.flush():
+                                yield text
                         break
                     except Exception as exc:
                         # Once text reached the user a retry would splice two different
@@ -353,6 +369,26 @@ class LLMEngine:
                 return
         finally:
             logger.info("Turn timings: %s | tools=%s", timings, [r.name for r in executed])
+
+    async def _repair_script(self, context: str, fragment: str, message: str = "") -> str:
+        """Translate a script slip for the ScriptGuard. Qwen translates Chinese into English
+        well but into Portuguese poorly ("武士刀" -> "bushinato"; via English: "Katana"), and
+        showing it the surrounding text made it repeat the text, so it gets the bare fragment
+        and the target language comes from the text itself."""
+
+        async def translate(text: str, language: str) -> str:
+            prompt = load_prompt("script_repair").format(fragment=text, language=language)
+            reply = await call_with_retry(
+                lambda: self.router.ainvoke(prompt), self.retry, "script repair"
+            )
+            return reply.text.strip()
+
+        # The reply so far may be too short to tell ("Gandalf, o"): the message helps.
+        # Undetected: the configured locale (showing the text instead made it translate that).
+        detected = detect_language(f"{message} {context}") or self.locale[:2]
+        target = LANGUAGE_NAMES.get(detected, "English")
+        english = await translate(fragment, "English")
+        return english if target == "English" else await translate(english, target)
 
     async def _verify_claims(
         self,

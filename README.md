@@ -288,6 +288,10 @@ A etapa de roteamento roda com temperatura 0 (`AGENT_ROUTING_TEMPERATURE`), porq
 - uma instrução em inglês ("reply in Portuguese") ainda puxava palavras em inglês ("algo else");
 - uma frase de exemplo na instrução fazia o modelo copiar os fatos do exemplo para respostas reais.
 
+**Textos longos e troca de alfabeto.** O prompt de sistema pede respostas curtas para perguntas e conversa, e a peça completa para pedidos criativos: uma história contada em cenas, com personagens, diálogo e final, e nunca uma sinopse. Antes, um "seja conciso" genérico transformava "crie uma história" num resumo de um parágrafo.
+
+Os modelos Qwen às vezes trocam para o chinês no meio da frase ("Gandalf, o灰袍巫师, decidiu…"). Isso aconteceu em cerca de 1 de cada 3 histórias do Gandalf, e nem o prompt nem `top_p` resolveram. O `ScriptGuard` (`origin/core/script_guard.py`) segura no streaming qualquer trecho em caracteres chineses, japoneses ou coreanos. O trecho é traduzido primeiro para o inglês e depois para o idioma da resposta, porque o Qwen traduz bem do chinês para o inglês e mal direto para o português ("武士刀" → "bushinato"; passando pelo inglês, "Katana"). A tradução entra encaixada na frase, com espaço, sem artigo repetido e com minúscula no meio da frase, e o texto continua. Resultado: "Gandalf, o feiticeiro de robe cinza, caminhava…", com 0 caracteres estrangeiros em 24 histórias. O guard fica desligado quando o usuário escreve nesses alfabetos ou pergunta sobre um idioma ("como se escreve obrigado em japonês?"). Se a tradução falhar, o trecho é removido.
+
 ### Falhas transitórias do Ollama
 
 Durante os testes, o processo que executa o modelo no Ollama (`llama-server`) caiu várias vezes e se recuperou sozinho segundos depois. O Origin tenta de novo automaticamente, em duas camadas (`OLLAMA_RETRY_ATTEMPTS=3`, espera de `OLLAMA_RETRY_BACKOFF=0.5` s que dobra a cada tentativa):

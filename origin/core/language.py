@@ -21,6 +21,7 @@ REPLY_INSTRUCTIONS = {
     ),
 }
 FALLBACK_INSTRUCTION = "[Reply in the same language the user wrote in.]"
+LANGUAGE_NAMES = {"pt": "Brazilian Portuguese", "en": "English", "es": "Spanish"}
 
 STOPWORDS = {
     "pt": {
