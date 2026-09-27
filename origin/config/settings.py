@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     # Choosing tools is classification: sampling noise there only causes skipped tools.
     agent_routing_temperature: float = 0.0
     sqlite_path: str = "./data/origin.db"
+    # Which embedding model indexed the memories, and thresholds calibrated for it.
+    calibration_path: str = "./data/calibration.json"
+    # JSON backups of every memory, written before a reindex.
+    memory_backup_dir: str = "./data/backups"
     # Most recent stored messages sent to the model as context for a session.
     session_history_limit: int = 20
 

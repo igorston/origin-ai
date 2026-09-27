@@ -8,6 +8,8 @@ from uuid import uuid4
 _tmp = tempfile.mkdtemp(prefix="origin-test-")
 os.environ.setdefault("CHROMA_PERSIST_DIR", os.path.join(_tmp, "chroma"))
 os.environ.setdefault("SQLITE_PATH", os.path.join(_tmp, "origin.db"))
+os.environ.setdefault("CALIBRATION_PATH", os.path.join(_tmp, "calibration.json"))
+os.environ.setdefault("MEMORY_BACKUP_DIR", os.path.join(_tmp, "backups"))
 os.environ.setdefault("OLLAMA_WARMUP", "false")
 
 import chromadb  # noqa: E402

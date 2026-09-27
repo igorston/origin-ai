@@ -4,6 +4,7 @@ import logging
 
 import httpx
 import ollama
+from chromadb.errors import InvalidArgumentError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -28,6 +29,22 @@ def register_error_handlers(app: FastAPI) -> None:
             detail += " — install it with `ollama pull <model>`."
         return JSONResponse(status_code=502, content={"detail": detail})
 
+    async def vector_store_error(request: Request, exc: InvalidArgumentError) -> JSONResponse:
+        if "dimension" not in str(exc):
+            logger.error("Vector store error: %s", exc)
+            return JSONResponse(status_code=500, content={"detail": f"Vector store error: {exc}"})
+        # The embedding model changed: stored vectors have another dimension.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": (
+                    "A memória foi indexada com outro modelo de embeddings e precisa ser "
+                    f"reindexada (Configurações → Memória, ou POST /memory/reindex). {exc}"
+                )
+            },
+        )
+
     app.add_exception_handler(httpx.ConnectError, ollama_unreachable)
     app.add_exception_handler(ConnectionError, ollama_unreachable)
     app.add_exception_handler(ollama.ResponseError, ollama_error)
+    app.add_exception_handler(InvalidArgumentError, vector_store_error)

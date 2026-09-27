@@ -191,6 +191,23 @@ Reescrever dados do usuário exige proteções, porque o modelo, sozinho, perdia
 
 `python scripts/eval_curation.py` mede fidelidade, divisão e idioma (resultado atual: 30/30, mediana de 0,4 s por nota).
 
+**Trocando de modelo: reindexar e calibrar.** Os três limiares acima dependem do modelo de embeddings, e a pergunta de substituição depende do modelo de chat. Trocar o `OLLAMA_EMBED_MODEL` também torna os vetores guardados incompatíveis: eles têm outra dimensão, e a busca passa a falhar. O Origin trata as duas coisas (**Configurações → Memória** na interface):
+
+1. **Detecção:** `data/calibration.json` registra qual modelo indexou as memórias. Na inicialização, se o modelo atual for outro, ou se a dimensão dos vetores for diferente, o log avisa, a interface mostra "reindexar" no rodapé e no gerenciador de memória, e a busca responde **409** com a instrução, em vez de um 500 genérico.
+2. **Reindexar** (`POST /memory/reindex`): recalcula o vetor de todas as memórias com o modelo atual, mantendo ids, metadados e arquivadas. Um backup em JSON é salvo em `data/backups/` antes, e a coleção antiga só é apagada depois que **todos** os vetores novos estiverem prontos. Se o Ollama cair no meio, nada se perde.
+3. **Calibrar** (`POST /memory/calibration/run`): mede o modelo atual num conjunto embutido de pares rotulados (paráfrases, contradições, fatos compatíveis, sem relação, perguntas relevantes e irrelevantes, em pt/en) e sugere os limiares. Também testa a pergunta de substituição do modelo de chat atual: quantas contradições reconhece e se arquivaria algum fato ainda verdadeiro. Você revisa o relatório e aplica.
+
+Os limiares aplicados valem só para o modelo de embeddings em que foram medidos. Ao trocar de modelo, o Origin volta aos padrões do `.env` até uma nova calibração.
+
+Com os modelos atuais, a calibração automática reproduz os valores ajustados à mão (sugere 0,917 / 0,549 / 0,457 contra 0,92 / 0,55 / 0,45), e o eval do agente segue 100%. Com o `nomic-embed-text`, ela sugere 0,922 / 0,632 / 0,529 e avisa que as classes se sobrepõem, o que confirma que esse modelo é pior em português.
+
+| Endpoint | Método | Descrição |
+|---|---|---|
+| `/memory/calibration` | GET | Modelo atual × modelo que indexou, dimensões, precisa reindexar?, limiares em uso, último relatório |
+| `/memory/calibration/run` | POST | Mede e sugere `{apply?}` |
+| `/memory/calibration/thresholds` | PUT / DELETE | Aplica limiares escolhidos / volta aos do `.env` |
+| `/memory/reindex` | POST | Recalcula os vetores com o modelo atual (com backup) |
+
 **Perguntas não salvam.** A tool `remember` declara `not_for_questions` nos metadados. Se a mensagem é só uma pergunta ("Onde eu moro?", "O que eu levo de presente pra ela?") e não tem um pedido explícito de salvar ("Você pode anotar que...?"), o agente descarta a chamada. Regras no prompt não bastavam: o modelo às vezes salvava "A capital da França é Paris." ou um plano tirado do histórico. Qualquer tool pode usar o mesmo mecanismo. Para esquecer algo de propósito ("esquece aquilo da alergia"), existe a tool `forget`, que apaga de verdade.
 
 > O modelo de embeddings padrão é o `bge-m3` porque é multilíngue. Em testes com textos em português, o `nomic-embed-text` não separava fatos relevantes de irrelevantes. Se trocar de modelo, recalibre o `MEMORY_MIN_SCORE` e recrie a coleção, porque vetores de modelos diferentes não são compatíveis.

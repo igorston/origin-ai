@@ -16,6 +16,7 @@ from langchain_core.tools import BaseTool
 
 from origin.config import Settings
 from origin.memory import VectorMemory
+from origin.memory.curator import MemoryCurator
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,8 @@ class ToolContext:
     memory: VectorMemory | None = None
     # Deterministic (temperature 0) model for small classification calls made inside tools.
     llm: BaseChatModel | None = None
+    # Shared with the API, so calibrated thresholds apply to tools too.
+    curator: MemoryCurator | None = None
 
 
 class ToolRegistry:

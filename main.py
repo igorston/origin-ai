@@ -16,12 +16,13 @@ from fastapi import FastAPI
 
 from origin import __version__
 from origin.api.errors import register_error_handlers
-from origin.api.routes import chat, health, memory, sessions, tools
+from origin.api.routes import calibration, chat, health, memory, sessions, tools
 from origin.config import get_settings
 from origin.core import LLMEngine, make_chat_model
 from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
+from origin.memory.calibration import CalibrationStore, MemoryCalibrator, Thresholds
 from origin.memory.curator import MemoryCurator
 from origin.memory.storage import SessionStore
 from origin.retry import RetryPolicy
@@ -49,7 +50,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     registry = (
         ToolRegistry.discover(
-            ToolContext(settings, app.state.memory, llm=judge),
+            ToolContext(settings, app.state.memory, llm=judge, curator=app.state.curator),
             disabled=settings.tools_disabled,
         )
         if settings.tools_enabled
@@ -57,6 +58,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     engine = LLMEngine.from_settings(settings, memory=app.state.memory, tools=registry.tools)
     app.state.engine = engine
+
+    def apply_thresholds(thresholds: Thresholds) -> None:
+        # Every component that reads a memory threshold, updated in place.
+        app.state.memory.dedup_threshold = thresholds.dedup
+        app.state.curator.conflict_threshold = thresholds.conflict
+        engine.memory_min_score = thresholds.min_score
+
+    app.state.calibrator = MemoryCalibrator(
+        app.state.memory,
+        judge=app.state.curator,
+        store=CalibrationStore(settings.calibration_path),
+        embed_model=settings.ollama_embed_model,
+        chat_model=settings.ollama_model,
+        defaults=Thresholds(
+            dedup=settings.memory_dedup_threshold,
+            conflict=settings.memory_conflict_threshold,
+            min_score=settings.memory_min_score,
+        ),
+        apply=apply_thresholds,
+        backup_dir=settings.memory_backup_dir,
+    )
     logger.info(
         "Origin Core Initialized (v%s) | model=%s | embeddings=%s | memories=%d | tools=%s",
         __version__,
@@ -71,6 +93,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Ollama is not reachable at %s; chat will fail until it is", ollama.url)
     elif missing := [name for name, ok in ollama.models.items() if not ok]:
         logger.warning("Missing Ollama models: %s (run `ollama pull <model>`)", ", ".join(missing))
+    await app.state.calibrator.bootstrap(probe=ollama.healthy)
 
     warmup_task = None
     if settings.ollama_warmup and ollama.healthy:
@@ -92,6 +115,7 @@ register_error_handlers(app)
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(sessions.router)
+app.include_router(calibration.router)
 app.include_router(memory.router)
 app.include_router(tools.router)
 mount_web(app)

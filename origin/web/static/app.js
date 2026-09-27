@@ -73,6 +73,11 @@ function h(tag, attrs = {}, ...children) {
   return node;
 }
 
+/** replaceChildren that skips null/false (the DOM would render them as the text "null"). */
+function setChildren(node, ...children) {
+  node.replaceChildren(...children.flat().filter((child) => child != null && child !== false));
+}
+
 function toast(message, kind = "error") {
   el.toast.textContent = message;
   el.toast.className = `toast ${kind}`;
@@ -146,7 +151,7 @@ function renderSystem(health) {
     const [kind, label] = !installed ? ["bad", "ausente"] : loaded ? ["ok", "carregado"] : ["warn", "em espera"];
     return h("li", {}, h("span", { class: `badge ${kind}` }, label), " ", h("code", {}, name));
   });
-  el.systemInfo.replaceChildren(
+  setChildren(el.systemInfo,
     h("dl", { class: "facts" },
       h("dt", {}, "Status"), h("dd", {}, h("span", { class: health.status === "ok" ? "badge ok" : "badge bad" }, health.status)),
       h("dt", {}, "Versão"), h("dd", {}, health.version),
@@ -553,6 +558,7 @@ function selectTab(name) {
   el.settingsDialog.querySelectorAll(".tab-panel").forEach((panel) => (panel.hidden = panel.dataset.panel !== name));
   if (name === "tools") refreshTools();
   if (name === "system") refreshHealth();
+  if (name === "calibration") refreshCalibration();
 }
 
 function openSettings(tab = "general") {
@@ -561,8 +567,169 @@ function openSettings(tab = "general") {
 }
 
 function renderSettingsHint() {
+  if (state.calibration?.needs_reindex) {
+    el.settingsHint.textContent = "reindexar";
+    return;
+  }
   const off = [!el.useMemory.checked && "memória", !el.useTools.checked && "tools"].filter(Boolean);
   el.settingsHint.textContent = off.length ? `${off.join(" e ")} off` : "";
+}
+
+// ---------------------------------------------------------------- memory calibration
+
+const THRESHOLD_INFO = {
+  dedup: ["Duplicata", "Acima disso, dois fatos são considerados o mesmo e não são salvos de novo."],
+  conflict: ["Candidatos a substituição", "Acima disso, o modelo de chat avalia se o fato novo substitui o antigo."],
+  min_score: ["Relevância na busca", "Memórias abaixo disso não entram no contexto da conversa."],
+};
+const SCORE_LABELS = {
+  paraphrase: "Paráfrases (mesmo fato)",
+  contradiction: "Contradições",
+  compatible: "Fatos compatíveis",
+  unrelated: "Sem relação",
+  relevant: "Perguntas relevantes",
+  irrelevant: "Perguntas irrelevantes",
+};
+
+async function refreshCalibration() {
+  try {
+    state.calibration = await api.calibrationStatus();
+  } catch (error) {
+    $("#calibration-status").replaceChildren(h("p", { class: "error-text" }, describeError(error)));
+    return;
+  }
+  renderSettingsHint();
+  const s = state.calibration;
+  $("#reindex-banner").hidden = !s.needs_reindex;
+  $("#reindex-banner-text").textContent = s.needs_reindex ? `A memória precisa ser reindexada: ${s.reason}.` : "";
+  if (!el.settingsDialog.open) return;
+
+  const dims = (dim) => (dim ? ` · ${dim} dimensões` : "");
+  const thresholds = Object.entries(THRESHOLD_INFO).map(([key, [label, help]]) =>
+    h("tr", {},
+      h("th", { title: help }, label),
+      h("td", {}, h("code", {}, s.thresholds[key].toFixed(3))),
+      h("td", { class: "muted small" }, s.thresholds[key] === s.defaults[key] ? "padrão" : `padrão ${s.defaults[key].toFixed(3)}`),
+    ),
+  );
+  setChildren($("#calibration-status"),
+    s.needs_reindex
+      ? h("div", { class: "banner warn" },
+          h("span", {}, `As ${s.count} memórias precisam ser reindexadas: ${s.reason}. Até lá, a busca na memória não funciona.`),
+          h("button", { class: "button primary", type: "button", onclick: reindex }, "Reindexar agora"),
+        )
+      : null,
+    h("dl", { class: "facts" },
+      h("dt", {}, "Embeddings"), h("dd", {}, h("code", {}, s.embed_model), dims(s.current_dim)),
+      h("dt", {}, "Indexadas com"), h("dd", {}, s.indexed_model ? h("code", {}, s.indexed_model) : "—", dims(s.stored_dim), ` · ${s.count} memória${s.count === 1 ? "" : "s"}`),
+      h("dt", {}, "Modelo de chat"), h("dd", {}, h("code", {}, s.chat_model)),
+      h("dt", {}, "Calibração"), h("dd", {},
+        s.calibrated
+          ? h("span", { class: "badge ok" }, `calibrado em ${new Date(s.calibrated_at).toLocaleString("pt-BR")}`)
+          : h("span", { class: "badge warn" }, "limiares padrão, não calibrados para este modelo")),
+    ),
+    h("table", { class: "thresholds" }, h("tbody", {}, thresholds)),
+    h("div", { class: "row-actions start" },
+      h("button", { class: "button primary", type: "button", id: "run-calibration", onclick: calibrate }, "Calibrar"),
+      !s.needs_reindex && s.count ? h("button", { class: "button", type: "button", onclick: reindex }, "Reindexar") : null,
+      s.calibrated ? h("button", { class: "button", type: "button", onclick: resetThresholds }, "Restaurar padrões") : null,
+    ),
+  );
+}
+
+async function reindex() {
+  const s = state.calibration;
+  if (!confirm(`Recalcular os vetores de ${s.count} memória(s) com ${s.embed_model}? Um backup em JSON é salvo antes.`)) return;
+  toast("Reindexando…", "info");
+  try {
+    const result = await api.reindexMemory();
+    toast(`${result.reindexed} memória(s) reindexada(s) em ${result.duration_s} s. Agora calibre os limiares.`, "info");
+  } catch (error) {
+    toast(describeError(error));
+  }
+  await refreshCalibration();
+  refreshMemory();
+}
+
+async function calibrate() {
+  const button = $("#run-calibration");
+  button.disabled = true;
+  button.textContent = "Calibrando…";
+  try {
+    renderReport(await api.runCalibration(false));
+  } catch (error) {
+    toast(describeError(error));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Calibrar";
+  }
+}
+
+function renderReport(report) {
+  const rows = Object.entries(THRESHOLD_INFO).map(([key, [label, help]]) => {
+    const [now, next] = [report.current[key], report.suggested[key]];
+    return h("tr", {},
+      h("th", { title: help }, label),
+      h("td", {}, h("code", {}, now.toFixed(3))),
+      h("td", {}, h("code", { class: Math.abs(next - now) >= 0.01 ? "changed" : "" }, next.toFixed(3))),
+    );
+  });
+  const scores = Object.entries(report.scores).map(([key, st]) =>
+    h("tr", {}, h("th", {}, SCORE_LABELS[key] || key), h("td", {}, st.min.toFixed(2)), h("td", {}, st.mean.toFixed(2)), h("td", {}, st.max.toFixed(2))),
+  );
+  const judge = report.judge;
+  $("#calibration-report").replaceChildren(
+    h("div", { class: "report" },
+      h("h3", {}, `Resultado · ${report.embed_model} + ${report.chat_model} · ${report.duration_s} s`),
+      h("table", { class: "thresholds" },
+        h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "Em uso"), h("th", {}, "Sugerido"))),
+        h("tbody", {}, rows),
+      ),
+      h("p", { class: "small" },
+        `Busca: ${report.recall_hits}/${report.recall_total} perguntas encontram seu fato com o limiar sugerido.`,
+        judge ? ` Substituição: ${judge.replaced_contradictions}/${judge.contradictions} contradições reconhecidas, ${judge.false_replacements.length}/${judge.compatible} fatos verdadeiros seriam arquivados.` : "",
+      ),
+      judge?.false_replacements.length
+        ? h("ul", { class: "small" }, judge.false_replacements.map((pair) => h("li", {}, pair)))
+        : null,
+      report.warnings.length
+        ? h("ul", { class: "warnings" }, report.warnings.map((w) => h("li", {}, w)))
+        : null,
+      h("details", {},
+        h("summary", { class: "small" }, "Distribuição de similaridade"),
+        h("table", { class: "thresholds scores" },
+          h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "mín"), h("th", {}, "média"), h("th", {}, "máx"))),
+          h("tbody", {}, scores),
+        ),
+      ),
+      h("div", { class: "row-actions start" },
+        h("button", { class: "button primary", type: "button", onclick: () => applySuggested(report.suggested) }, "Aplicar sugeridos"),
+        h("button", { class: "button", type: "button", onclick: () => $("#calibration-report").replaceChildren() }, "Descartar"),
+      ),
+    ),
+  );
+}
+
+async function applySuggested(thresholds) {
+  try {
+    await api.setThresholds(thresholds);
+    toast("Limiares calibrados aplicados.", "info");
+    $("#calibration-report").replaceChildren();
+  } catch (error) {
+    toast(describeError(error));
+  }
+  await refreshCalibration();
+}
+
+async function resetThresholds() {
+  if (!confirm("Voltar aos limiares padrão do .env?")) return;
+  try {
+    await api.resetThresholds();
+    toast("Limiares padrão restaurados.", "info");
+  } catch (error) {
+    toast(describeError(error));
+  }
+  await refreshCalibration();
 }
 
 // ---------------------------------------------------------------- layout
@@ -679,7 +846,13 @@ for (const input of [el.useMemory, el.useTools]) {
   });
 }
 
+$("#reindex-banner-open").addEventListener("click", () => {
+  el.memoryDialog.close();
+  openSettings("calibration");
+});
+
 renderSettingsHint();
+refreshCalibration();
 refreshHealth();
 refreshSessions();
 refreshMemory();

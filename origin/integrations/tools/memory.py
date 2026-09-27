@@ -22,7 +22,7 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
     if ctx.memory is None:
         return []
     store = ctx.memory
-    curator = MemoryCurator(
+    curator = ctx.curator or MemoryCurator(
         store,
         ctx.llm,
         ctx.settings.memory_conflict_threshold,

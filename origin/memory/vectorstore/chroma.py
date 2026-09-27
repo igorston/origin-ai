@@ -43,14 +43,63 @@ class VectorMemory:
     ) -> None:
         self.collection = collection
         # Paraphrases of a stored fact score >= ~0.90 with bge-m3, contradictions ~0.74-0.87.
+        # Recalibrate (origin.memory.calibration) when the embedding model changes.
         self.dedup_threshold = dedup_threshold
+        self.embeddings = embeddings
         self._client = client
-        self._store = Chroma(
-            collection_name=collection,
-            embedding_function=embeddings,
-            client=client,
+        self._store = self._open()
+        self._current_dim: int | None = None
+
+    def _open(self) -> Chroma:
+        return Chroma(
+            collection_name=self.collection,
+            embedding_function=self.embeddings,
+            client=self._client,
             collection_metadata={"hnsw:space": "cosine"},
         )
+
+    # ------------------------------------------------------------ model compatibility
+
+    def stored_dim(self) -> int | None:
+        """Dimension of the vectors already stored (None if the collection is empty)."""
+        stored = self._client.get_collection(self.collection).get(limit=1, include=["embeddings"])
+        vectors = stored["embeddings"]
+        return len(vectors[0]) if vectors is not None and len(vectors) else None
+
+    async def current_dim(self) -> int:
+        """Dimension produced by the current embedding model."""
+        if self._current_dim is None:
+            self._current_dim = len(await self.embeddings.aembed_query("dimension probe"))
+        return self._current_dim
+
+    def export(self) -> list[MemoryRecord]:
+        """Every memory, archived included, for backups."""
+        return self.records(limit=1_000_000)
+
+    async def reindex(self, batch: int = 64) -> int:
+        """Re-embed every memory with the current embedding model (required after changing
+        it: old vectors have another dimension or live in another space). All new vectors
+        are computed before the old collection is dropped, so a failure midway (e.g.
+        Ollama down) leaves the memories untouched."""
+        records = self.export()
+        texts = [r.content for r in records]
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), batch):
+            vectors += await self.embeddings.aembed_documents(texts[start : start + batch])
+
+        self._client.delete_collection(self.collection)
+        self._store = self._open()
+        self._current_dim = None
+        collection = self._client.get_collection(self.collection)
+        for start in range(0, len(records), batch):
+            chunk = records[start : start + batch]
+            collection.add(
+                ids=[r.id for r in chunk],
+                documents=[r.content for r in chunk],
+                embeddings=vectors[start : start + batch],
+                metadatas=[r.metadata or None for r in chunk],
+            )
+        return len(records)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "VectorMemory":

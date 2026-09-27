@@ -48,6 +48,12 @@ export const api = {
   memoryStats: () => request("GET", "/memory/stats"),
 
   tools: () => request("GET", "/tools"),
+
+  calibrationStatus: () => request("GET", "/memory/calibration"),
+  runCalibration: (apply = false) => request("POST", "/memory/calibration/run", { apply }),
+  setThresholds: (thresholds) => request("PUT", "/memory/calibration/thresholds", thresholds),
+  resetThresholds: () => request("DELETE", "/memory/calibration/thresholds"),
+  reindexMemory: () => request("POST", "/memory/reindex"),
 };
 
 /** Parse one SSE block ("event: x\ndata: {...}") into {event, data}. */

@@ -70,6 +70,11 @@
         <button class="icon-button" type="button" data-close aria-label="Fechar">✕</button>
       </header>
 
+      <div class="banner warn" id="reindex-banner" hidden>
+        <span id="reindex-banner-text"></span>
+        <button class="button" type="button" id="reindex-banner-open">Resolver</button>
+      </div>
+
       <div class="memory-toolbar">
         <input class="field" id="memory-search" type="search" placeholder="Buscar por significado…" />
         <div class="segmented" role="radiogroup" aria-label="Estado">
@@ -107,6 +112,7 @@
       </header>
       <nav class="tabs" role="tablist">
         <button class="tab active" type="button" role="tab" data-tab="general">Geral</button>
+        <button class="tab" type="button" role="tab" data-tab="calibration">Memória</button>
         <button class="tab" type="button" role="tab" data-tab="tools">Tools</button>
         <button class="tab" type="button" role="tab" data-tab="system">Sistema</button>
       </nav>
@@ -127,6 +133,15 @@
           </span>
         </label>
         <p class="muted small">Estas preferências valem para as próximas mensagens e ficam salvas neste navegador.</p>
+      </section>
+
+      <section class="tab-panel" data-panel="calibration" hidden>
+        <p class="muted small">
+          Os limiares da memória (duplicata, substituição e busca) dependem do modelo de embeddings, e a checagem
+          de substituição depende do modelo de chat. Ao trocar de modelo, reindexe e calibre.
+        </p>
+        <div id="calibration-status"></div>
+        <div id="calibration-report"></div>
       </section>
 
       <section class="tab-panel" data-panel="tools" hidden>
