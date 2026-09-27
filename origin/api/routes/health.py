@@ -13,6 +13,8 @@ router = APIRouter(tags=["system"])
 class Health(BaseModel):
     status: str
     version: str
+    # False while models are not loaded in Ollama: the next reply will be slow, not broken.
+    ready: bool
     ollama: OllamaStatus
 
 
@@ -23,4 +25,9 @@ async def health(
     ollama = await check_ollama(settings)
     if not ollama.healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return Health(status="ok" if ollama.healthy else "degraded", version=__version__, ollama=ollama)
+    return Health(
+        status="ok" if ollama.healthy else "degraded",
+        version=__version__,
+        ready=ollama.ready,
+        ollama=ollama,
+    )

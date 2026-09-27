@@ -3,7 +3,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import tool
 
 from origin.core import LLMEngine
-from origin.core.agent import unbacked_claims
+from origin.core.agent import blocked_for_question, is_pure_question, unbacked_claims
 from tests.fakes import ScriptedChatModel, tool_call
 
 
@@ -172,6 +172,62 @@ async def test_no_check_when_claim_is_backed_or_absent() -> None:
 )
 def test_unbacked_claims_detection(text: str, claimed: set[str]) -> None:
     assert unbacked_claims(text, [], {"remember", "forget"}) == claimed
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Onde eu moro?", True),
+        ("Qual a capital da França e que dia é hoje?", True),
+        ("Onde eu moro? E quantos dias faltam pro Natal?", True),
+        ("Me mudei pra SP. Quantos dias faltam pro Natal?", False),
+        ("Lembra que eu moro em Recife.", False),
+        ("oi", False),
+    ],
+)
+def test_is_pure_question(message: str, expected: bool) -> None:
+    assert is_pure_question(message) is expected
+
+
+@tool
+def save(fact: str) -> str:
+    """Save a fact."""
+    return "saved"
+
+
+save.metadata = {"not_for_questions": True, "explicit_intent": r"\banot"}
+
+
+@pytest.mark.parametrize(
+    ("message", "blocked"),
+    [
+        ("O que eu levo de presente pra ela?", True),
+        ("Você pode anotar que eu moro em Recife?", False),  # explicit request
+        ("Moro em Recife.", False),  # statement
+    ],
+)
+def test_blocked_for_question(message: str, blocked: bool) -> None:
+    assert blocked_for_question(save, message) is blocked
+    assert blocked_for_question(echo, message) is False  # tools opt in via metadata
+
+
+async def test_question_gate_drops_routing_calls_and_answers_loop_calls() -> None:
+    model = ScriptedChatModel(
+        responses=[
+            tool_call("save", {"fact": "Vou visitar a Júlia."}),  # routing turn: dropped
+            tool_call("save", {"fact": "x"}, call_id="2"),  # answer turn: skipped
+            AIMessage("Leve chocolate."),
+        ]
+    )
+    engine = LLMEngine(model, "sys", "scripted", tools={"save": save}, tool_routing=True)
+
+    result = await engine.generate("O que eu levo de presente pra ela?", use_memory=False)
+
+    assert result.text == "Leve chocolate."
+    assert result.tool_calls == []  # nothing ran
+    answer_call, final_call = model.received[1], model.received[2]
+    assert len(answer_call) == 2  # routing calls were dropped, not added to the context
+    assert final_call[-1].content.startswith("Not executed: the user only asked a question")
 
 
 async def test_stream_yields_only_text() -> None:

@@ -35,10 +35,12 @@ class Settings(BaseSettings):
     memory_min_score: float = 0.45
     # Also search memory with the previous exchange, so follow-ups ("and hers?") find facts.
     memory_contextual_recall: bool = True
-    # Calibrated on bge-m3: paraphrases score >= ~0.90, contradictions ~0.74-0.87,
-    # merely related facts ~0.62-0.70. Recalibrate if you change the embedding model.
+    # Calibrated on bge-m3: paraphrases score >= ~0.90. Contradictions phrased differently
+    # score as low as ~0.58 ("Eu moro em Recife." / "Moro em São Paulo."), overlapping with
+    # merely related facts, so the conflict threshold only preselects candidates; a yes/no
+    # model check (0 false positives in 60 judgments) decides. Recalibrate for other models.
     memory_dedup_threshold: float = 0.92
-    memory_conflict_threshold: float = 0.72
+    memory_conflict_threshold: float = 0.55
 
     tools_enabled: bool = True
     tools_disabled: list[str] = []

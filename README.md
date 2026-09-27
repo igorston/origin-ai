@@ -61,7 +61,22 @@ cp .env.example .env
 python main.py
 ```
 
-A API sobe em `http://127.0.0.1:8000` — docs interativas em `/docs` e healthcheck em `/health`.
+Abra **http://127.0.0.1:8000** no navegador para usar a interface web. A API continua disponível no mesmo endereço, com documentação interativa em `/docs` e healthcheck em `/health`.
+
+### Interface web
+
+A interface é servida pelo próprio Origin (`origin/web/static`): HTML, CSS e JavaScript puros, sem etapa de build e sem nenhum recurso de CDN, então funciona offline. Ela foi feita para testes manuais:
+
+| Área | O que faz |
+|---|---|
+| **Conversas** (esquerda) | Cria, retoma e apaga sessões. O histórico fica no servidor e sobrevive a um reload. |
+| **Chat** | Streaming token a token via `/chat/events`. Cada tool call aparece num cartão expansível com argumentos e resultado. O rodapé de cada resposta mostra o tempo até o 1º token e o total. O botão **Parar** interrompe a geração. |
+| **Memória / Tools** (topo) | Liga ou desliga, por mensagem, a busca na memória e o uso de tools. |
+| **Painel ⚙ → Memória** | Lista e busca por significado (com score), adiciona fatos, apaga e restaura memórias arquivadas. |
+| **Painel ⚙ → Tools / Sistema** | Tools carregadas com suas descrições, estado do Ollama e dos modelos. |
+| **Indicador de status** | 🟢 online · 🟡 **carregando** (modelos fora da memória do Ollama; a próxima resposta pode levar ~15 s) · 🔴 degradado/offline. |
+
+Tema claro e escuro seguem o sistema, e o layout se adapta ao celular.
 
 ```bash
 # Resposta completa
@@ -77,7 +92,8 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
-| `/health` | GET | Status, versão e estado do Ollama/modelos (503 se degradado) |
+| `/` | GET | Interface web |
+| `/health` | GET | Status, versão, `ready` (modelos carregados) e estado do Ollama (503 se degradado) |
 | `/chat` | POST | Resposta completa `{response, model, session_id, tool_calls}` |
 | `/chat/stream` | POST | Resposta em streaming (`text/plain`), só o texto |
 | `/chat/events` | POST | Streaming em SSE com eventos `tool_call`, `token`, `done` e `error` |
@@ -152,10 +168,14 @@ curl -X POST http://127.0.0.1:8000/chat \
 | Similaridade | O que acontece |
 |---|---|
 | ≥ `MEMORY_DEDUP_THRESHOLD` (0,92) | É o mesmo fato: não salva de novo |
-| ≥ `MEMORY_CONFLICT_THRESHOLD` (0,72) | Uma pergunta de sim/não ao modelo (temperatura 0, ~0,1 s) decide se o fato novo substitui o antigo. "Meu time é o Náutico" substitui "Meu time é o Sport"; "Minha filha se chama Laura" **não** substitui "Meu filho se chama Pedro" |
+| ≥ `MEMORY_CONFLICT_THRESHOLD` (0,55), até 3 candidatos | Uma pergunta de sim/não ao modelo (temperatura 0, em paralelo, ~0,1 s) decide se o fato novo substitui o antigo. "Moro em São Paulo" substitui "Eu moro em Recife"; "Minha filha se chama Laura" **não** substitui "Meu filho se chama Pedro" |
 | abaixo | Fatos independentes |
 
-Fatos substituídos são **arquivados**, não apagados: saem da busca, mas continuam em `GET /memory` e podem ser restaurados com `POST /memory/{id}/restore`. A pergunta foi escrita para errar para o lado seguro. Num teste com 19 pares, ela não teve nenhum falso positivo (nunca substituiu um fato ainda verdadeiro), mas deixou passar 3 substituições reais. Para esquecer algo de propósito ("esquece aquilo da alergia"), existe a tool `forget`, que apaga de verdade.
+O limiar é baixo de propósito. Contradições escritas de formas diferentes pontuam pouco ("Eu moro em Recife." / "Moro em São Paulo." = 0,58), na mesma faixa de fatos só relacionados. Por isso a similaridade só pré-seleciona candidatos, e quem decide é a pergunta.
+
+Fatos substituídos são **arquivados**, não apagados: saem da busca, mas continuam em `GET /memory` e podem ser restaurados com `POST /memory/{id}/restore`. A pergunta foi escrita para errar para o lado seguro. Em 60 julgamentos, ela teve zero falsos positivos (nunca substituiu um fato ainda verdadeiro) e deixou passar 12 substituições reais, concentradas em 4 pares escritos de formas muito diferentes.
+
+**Perguntas não salvam.** A tool `remember` declara `not_for_questions` nos metadados. Se a mensagem é só uma pergunta ("Onde eu moro?", "O que eu levo de presente pra ela?") e não tem um pedido explícito de salvar ("Você pode anotar que...?"), o agente descarta a chamada. Regras no prompt não bastavam: o modelo às vezes salvava "A capital da França é Paris." ou um plano tirado do histórico. Qualquer tool pode usar o mesmo mecanismo. Para esquecer algo de propósito ("esquece aquilo da alergia"), existe a tool `forget`, que apaga de verdade.
 
 > O modelo de embeddings padrão é o `bge-m3` porque é multilíngue. Em testes com textos em português, o `nomic-embed-text` não separava fatos relevantes de irrelevantes. Se trocar de modelo, recalibre o `MEMORY_MIN_SCORE` e recrie a coleção, porque vetores de modelos diferentes não são compatíveis.
 
@@ -223,7 +243,7 @@ Primeiro token pelo `/chat/events`, em um servidor recém-iniciado: **~0,2 a 0,5
 
 `scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma), `question` (perguntas sobre fatos salvos são respondidas, não salvas de novo), `memory` (duplicatas, substituições e esquecimento) e `followup` (recuperar fatos pelo contexto). Todo caso também reprova respostas que só repetem a mensagem do usuário.
 
-Resultado atual (qwen3:8b, 10 runs por caso): **349/350**. A única falha é um `remember` desnecessário em 1 de 40 perguntas sobre fatos já salvos, sem efeito: a proteção contra duplicatas impede que algo seja gravado. Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
+Resultado atual (qwen3:8b, 10 runs por caso): **360/360**. Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
 
 ```bash
 python scripts/eval_agent.py                          # configuração atual, 3 runs por caso

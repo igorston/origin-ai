@@ -43,14 +43,42 @@ class ToolCallRecord(BaseModel):
     output: str
 
 
+SENTENCE = re.compile(r"[^.!?\n]+[.!?]*")
+
+
+def is_pure_question(message: str) -> bool:
+    """Every sentence is a question ("Onde eu moro?"), with no statement mixed in."""
+    sentences = [s.strip() for s in SENTENCE.findall(message) if s.strip()]
+    return bool(sentences) and all(s.endswith("?") for s in sentences)
+
+
+def blocked_for_question(tool: BaseTool, message: str) -> bool:
+    """Tools can opt out of pure questions via metadata, unless the message explicitly asks
+    for them. Small models sometimes answer "O que eu levo de presente pra ela?" by saving
+    a fact from the history, or save "A capital da França é Paris." from a question; prompt
+    rules alone did not stop it."""
+    meta = tool.metadata or {}
+    if not meta.get("not_for_questions") or not is_pure_question(message):
+        return False
+    intent = meta.get("explicit_intent")
+    return not (intent and re.search(intent, message, re.IGNORECASE))
+
+
 async def execute_tool_calls(
-    tool_calls: Sequence[ToolCall], tools: Mapping[str, BaseTool]
+    tool_calls: Sequence[ToolCall], tools: Mapping[str, BaseTool], message: str = ""
 ) -> tuple[list[ToolMessage], list[ToolCallRecord]]:
-    """Run the model's tool calls. Errors are reported back to the model, never raised."""
+    """Run the model's tool calls. Errors are reported back to the model, never raised.
+    Calls blocked for being made on a pure question get a ToolMessage (the protocol needs
+    one per call) but no record, since nothing ran."""
     messages: list[ToolMessage] = []
     records: list[ToolCallRecord] = []
     for call in tool_calls:
         tool = tools.get(call["name"])
+        if tool is not None and blocked_for_question(tool, message):
+            logger.info("Blocked %s(%s) on a pure question", call["name"], call["args"])
+            skipped = "Not executed: the user only asked a question. Answer it; nothing was saved."
+            messages.append(ToolMessage(skipped, tool_call_id=call["id"], name=call["name"]))
+            continue
         if tool is None:
             output = f"Error: unknown tool {call['name']!r}. Available: {', '.join(tools)}."
         else:

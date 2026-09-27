@@ -16,16 +16,25 @@ def fake_status(**kwargs: object):
     return check
 
 
-def test_health_ok(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(health, "check_ollama", fake_status(reachable=True, models={"m": True}))
+@pytest.mark.parametrize("loaded", [True, False])
+def test_health_ok(client: TestClient, monkeypatch: pytest.MonkeyPatch, loaded: bool) -> None:
+    status = fake_status(reachable=True, models={"m": True}, loaded={"m": loaded})
+    monkeypatch.setattr(health, "check_ollama", status)
 
     response = client.get("/health")
 
+    # Unloaded models make the next reply slow, not the service unhealthy.
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
         "version": __version__,
-        "ollama": {"url": "http://ollama", "reachable": True, "models": {"m": True}},
+        "ready": loaded,
+        "ollama": {
+            "url": "http://ollama",
+            "reachable": True,
+            "models": {"m": True},
+            "loaded": {"m": loaded},
+        },
     }
 
 

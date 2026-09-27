@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Origin</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <aside class="sidebar" id="sidebar" aria-label="Conversas">
+        <header class="brand">
+          <span class="logo">🧬 Origin</span>
+          <button class="health" id="health" type="button" title="Estado do sistema">
+            <span class="dot"></span><span class="health-label">…</span>
+          </button>
+        </header>
+        <button class="button primary block" id="new-session" type="button">+ Nova conversa</button>
+        <nav class="session-list" id="session-list"></nav>
+      </aside>
+
+      <main class="chat">
+        <header class="chat-header">
+          <button class="icon-button only-mobile" id="open-sidebar" type="button" aria-label="Conversas">☰</button>
+          <h1 class="chat-title" id="chat-title">Nova conversa</h1>
+          <div class="switches">
+            <label class="switch" title="Buscar fatos da memória de longo prazo">
+              <input type="checkbox" id="use-memory" checked /><span>Memória</span>
+            </label>
+            <label class="switch" title="Permitir que o agente chame tools">
+              <input type="checkbox" id="use-tools" checked /><span>Tools</span>
+            </label>
+          </div>
+          <button class="icon-button" id="toggle-panel" type="button" aria-label="Painel" title="Memória, tools e sistema">⚙</button>
+        </header>
+
+        <section class="messages" id="messages" aria-live="polite">
+          <div class="empty" id="empty-state">
+            <p class="empty-title">Converse com o Origin</p>
+            <p>Tudo roda localmente. Experimente:</p>
+            <div class="suggestions">
+              <button type="button" class="suggestion">Lembra que eu moro em Recife.</button>
+              <button type="button" class="suggestion">Que dia é hoje e quantos dias faltam pro Natal?</button>
+              <button type="button" class="suggestion">Onde eu moro?</button>
+            </div>
+          </div>
+        </section>
+
+        <form class="composer" id="composer">
+          <textarea id="input" rows="1" placeholder="Mensagem para o Origin…" title="Enter envia · Shift+Enter quebra linha" autocomplete="off"></textarea>
+          <button class="button primary" id="send" type="submit">Enviar</button>
+          <button class="button danger" id="stop" type="button" hidden>Parar</button>
+        </form>
+      </main>
+
+      <aside class="panel" id="panel" aria-label="Painel">
+        <nav class="tabs" role="tablist">
+          <button class="tab active" type="button" role="tab" data-tab="memory">Memória</button>
+          <button class="tab" type="button" role="tab" data-tab="tools">Tools</button>
+          <button class="tab" type="button" role="tab" data-tab="system">Sistema</button>
+          <button class="icon-button only-mobile" id="close-panel" type="button" aria-label="Fechar">✕</button>
+        </nav>
+
+        <section class="tab-panel" data-panel="memory">
+          <p class="muted" id="memory-stats">…</p>
+          <input class="field" id="memory-search" type="search" placeholder="Buscar por significado…" />
+          <label class="check"><input type="checkbox" id="show-archived" /> Mostrar arquivadas</label>
+          <form class="add-memory" id="add-memory">
+            <textarea class="field" id="memory-text" rows="2" placeholder="Novo fato (um por linha)"></textarea>
+            <button class="button" type="submit">Adicionar</button>
+          </form>
+          <ul class="memory-list" id="memory-list"></ul>
+        </section>
+
+        <section class="tab-panel" data-panel="tools" hidden>
+          <ul class="tool-list" id="tool-list"></ul>
+        </section>
+
+        <section class="tab-panel" data-panel="system" hidden>
+          <div id="system-info"></div>
+          <button class="button" id="refresh-health" type="button">Verificar novamente</button>
+          <p class="muted">Documentação interativa da API: <a href="/docs" target="_blank">/docs</a></p>
+        </section>
+      </aside>
+      <div class="scrim" id="scrim"></div>
+    </div>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

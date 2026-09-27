@@ -22,7 +22,12 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
 from origin.config import Settings
-from origin.core.agent import ToolCallRecord, execute_tool_calls, unbacked_claims
+from origin.core.agent import (
+    ToolCallRecord,
+    blocked_for_question,
+    execute_tool_calls,
+    unbacked_claims,
+)
 from origin.core.language import reply_instruction
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
@@ -231,7 +236,7 @@ class LLMEngine:
 
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
             with timings.phase("tools"):
-                tool_messages, records = await execute_tool_calls(tool_calls, tools)
+                tool_messages, records = await execute_tool_calls(tool_calls, tools, message)
             messages.extend(remind_language(tool_messages, message))
             executed.extend(records)
             return records
@@ -247,9 +252,15 @@ class LLMEngine:
                 router = self.router.bind_tools(list(tools.values()))
                 with timings.phase("routing"):
                     decision = await router.ainvoke([*messages[:-1], routing])
-                if decision.tool_calls:
-                    messages.append(AIMessage("", tool_calls=decision.tool_calls))
-                    for record in await run_tools(decision.tool_calls):
+                calls = [
+                    call
+                    for call in decision.tool_calls
+                    if call["name"] not in tools
+                    or not blocked_for_question(tools[call["name"]], message)
+                ]
+                if calls:
+                    messages.append(AIMessage("", tool_calls=calls))
+                    for record in await run_tools(calls):
                         yield record
                     first_iteration = 1
 
@@ -277,7 +288,9 @@ class LLMEngine:
                     )
                 if response is not None and tools:
                     with timings.phase("claim_check"):
-                        records = await self._verify_claims(tools, messages, response, executed)
+                        records = await self._verify_claims(
+                            tools, messages, response, executed, message
+                        )
                     for record in records:
                         yield record
                 return
@@ -290,6 +303,7 @@ class LLMEngine:
         messages: list[BaseMessage],
         response: BaseMessage,
         executed: list[ToolCallRecord],
+        message: str,
     ) -> list[ToolCallRecord]:
         """If the final reply claims an effect ("anotei!") whose tool was never called, give
         the model one chance to actually call it, so the claim becomes true."""
@@ -303,7 +317,7 @@ class LLMEngine:
         calls = [call for call in decision.tool_calls if call["name"] in claimed]
         if not calls:
             return []
-        _, records = await execute_tool_calls(calls, tools)
+        _, records = await execute_tool_calls(calls, tools, message)
         return records
 
     async def generate(

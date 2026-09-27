@@ -23,6 +23,7 @@ from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
 from origin.memory.storage import SessionStore
+from origin.web import mount_web
 
 settings = get_settings()
 
@@ -85,6 +86,7 @@ app.include_router(chat.router)
 app.include_router(sessions.router)
 app.include_router(memory.router)
 app.include_router(tools.router)
+mount_web(app)
 
 
 if __name__ == "__main__":

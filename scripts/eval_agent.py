@@ -210,7 +210,7 @@ CASES = [
     Case(
         "compound",
         "Qual a capital da França e que dia é hoje?",
-        [says("Paris", WEEKDAY_PT)],
+        [says("Paris", WEEKDAY_PT), no_remember()],
     ),
     Case(
         "compound",
@@ -307,6 +307,13 @@ CASES = [
         "Me mudei pra São Paulo mês passado, anota aí.",
         [remembered("São Paulo"), forgotten("Recife"), portuguese(), addresses_user()],
         seed=["Moro em Recife.", "Minha mãe se chama Helena."],
+    ),
+    Case(
+        "memory",
+        "Me mudei pra São Paulo.",
+        [remembered("São Paulo"), forgotten("Recife"), kept("Thor"), portuguese()],
+        # Phrased differently from the new fact: similarity only ~0.58.
+        seed=["Eu moro em Recife.", "Meu cachorro se chama Thor.", "Minha mãe se chama Helena."],
     ),
     Case(
         "memory",
@@ -457,7 +464,11 @@ async def main() -> None:
     for case in cases:
         passes = 0
         for _ in range(args.runs):
-            ok, elapsed, result = await run_case(case, settings, embeddings)
+            try:
+                ok, elapsed, result = await run_case(case, settings, embeddings)
+            except Exception as exc:  # e.g. a transient Ollama runner crash: one failed run
+                ok, elapsed = False, 0.0
+                result = ChatResult(text=f"<{type(exc).__name__}: {str(exc)[:120]}>")
             passes += ok
             latencies.append(elapsed)
             if args.verbose or not ok:
@@ -472,6 +483,8 @@ async def main() -> None:
         print(f"{group:9} {sum(results)}/{len(results) * args.runs}")
     latencies.sort()
     print(f"latency   median {latencies[len(latencies) // 2]:.1f}s, max {latencies[-1]:.1f}s")
+    if datetime.now().astimezone().date() != TODAY:
+        print("WARNING: the date changed during the run; date-based checks are unreliable.")
 
 
 if __name__ == "__main__":

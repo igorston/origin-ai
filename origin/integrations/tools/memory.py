@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -14,6 +15,12 @@ logger = logging.getLogger(__name__)
 MEMORY_ID = re.compile(r"^[0-9a-f]{32}$")
 # A description must match a stored memory at least this well to be forgotten.
 FORGET_MIN_SCORE = 0.6
+# Most similar stored memories checked for being superseded by a new fact.
+CONFLICT_CANDIDATES = 3
+EXPLICIT_SAVE_INTENT = (
+    r"\b(lembr(e|a|ar)\s+(de\s+)?que|anot|guard|salv|registr|n[ãa]o\s+esque[cç]|"
+    r"remember\s+that|note\s+that|save)"
+)
 
 
 def get_tools(ctx: "ToolContext") -> list[BaseTool]:
@@ -43,14 +50,16 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         if duplicate := await store.find_duplicate(fact):
             return f'Already in memory (id={duplicate.id}): "{duplicate.content}".'
 
-        similar = await store.search(fact, k=5, min_score=conflict_threshold)
+        similar = await store.search(fact, k=CONFLICT_CANDIDATES, min_score=conflict_threshold)
         (memory_id,) = await store.add([fact], {"source": "agent"}, dedup=False)
         output = f"Saved to long-term memory (id={memory_id})."
 
         # Similarity alone cannot tell "Sport -> Náutico" (replace) from "pizza de calabresa /
-        # pizza de mussarela" (both true), so a focused yes/no call decides. Superseded facts
-        # are archived, not deleted, so a wrong call is recoverable.
-        replaced = [hit for hit in similar if await _supersedes(hit.content, fact)]
+        # pizza de mussarela" (both true), so a focused yes/no call decides, one per candidate,
+        # in parallel. Superseded facts are archived, not deleted, so a wrong call is
+        # recoverable.
+        verdicts = await asyncio.gather(*(_supersedes(hit.content, fact) for hit in similar))
+        replaced = [hit for hit, supersedes in zip(similar, verdicts, strict=True) if supersedes]
         for hit in replaced:
             store.archive(hit.id, superseded_by=memory_id)
         if replaced:
@@ -75,6 +84,11 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
             return False
         # The prompt asks whether both can be true at once: "NO" means the new fact replaces.
         return answer.startswith("NO")
+
+    # Pure questions ("Onde eu moro?", "O que levo de presente pra ela?") never save, unless
+    # they carry an explicit save request ("Você pode anotar que...?", "Lembra que ...?").
+    # "Você lembra o nome dela?" asks to recall, so bare "lembra" does not count.
+    remember.metadata = {"not_for_questions": True, "explicit_intent": EXPLICIT_SAVE_INTENT}
 
     @tool
     async def forget(memory: str) -> str:

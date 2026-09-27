@@ -18,11 +18,19 @@ logger = logging.getLogger(__name__)
 class OllamaStatus(BaseModel):
     url: str
     reachable: bool
+    # Required model -> installed?
     models: dict[str, bool] = {}
+    # Required model -> currently loaded in memory? (Ollama unloads idle models after
+    # OLLAMA_KEEP_ALIVE; the next request then pays the load time, ~10-15s.)
+    loaded: dict[str, bool] = {}
 
     @property
     def healthy(self) -> bool:
         return self.reachable and all(self.models.values())
+
+    @property
+    def ready(self) -> bool:
+        return self.healthy and all(self.loaded.values())
 
 
 def _normalize(name: str) -> str:
@@ -33,15 +41,21 @@ async def check_ollama(settings: Settings, timeout: float = 2.0) -> OllamaStatus
     required = [settings.ollama_model, settings.ollama_embed_model]
     try:
         async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=timeout) as client:
-            response = await client.get("/api/tags")
-            response.raise_for_status()
+            tags, running = await asyncio.gather(client.get("/api/tags"), client.get("/api/ps"))
+            tags.raise_for_status()
     except httpx.HTTPError:
         return OllamaStatus(url=settings.ollama_base_url, reachable=False)
-    installed = {_normalize(m["name"]) for m in response.json().get("models", [])}
+    installed = {_normalize(m["name"]) for m in tags.json().get("models", [])}
+    in_memory = (
+        {_normalize(m["name"]) for m in running.json().get("models", [])}
+        if running.is_success
+        else set()
+    )
     return OllamaStatus(
         url=settings.ollama_base_url,
         reachable=True,
         models={name: _normalize(name) in installed for name in required},
+        loaded={name: _normalize(name) in in_memory for name in required},
     )
 
 
