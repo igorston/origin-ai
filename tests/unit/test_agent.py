@@ -44,7 +44,7 @@ async def test_tool_loop_executes_call_and_returns_final_answer() -> None:
     assert isinstance(second_call[-1], ToolMessage)
     # The model sees the output plus a language reminder; the record keeps the raw output.
     assert second_call[-1].content == (
-        'echo: hi\n\n[Reply to the user in the same language as their message: "say hi"]'
+        "echo: hi\n\n[Reply to the user in English, in one or two direct sentences.]"
     )
     assert engine.model.bound_tools == ["echo", "explode"]
     assert "## Tools" in second_call[0].content

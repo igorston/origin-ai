@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from origin.config import Settings
 from origin.core.agent import ToolCallRecord, execute_tool_calls, unbacked_claims
+from origin.core.language import reply_instruction
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
 
@@ -41,12 +42,10 @@ def make_chat_model(settings: Settings, temperature: float | None = None) -> Cha
 
 def remind_language(tool_messages: list[ToolMessage], message: str) -> list[ToolMessage]:
     """Tool results are English and are the last thing the model reads before replying, which
-    made small models answer in English. Quoting the user's own words anchors the language."""
+    made small models answer in English. Append an instruction in the user's own language —
+    quoting the user's message instead made the model parrot the quote back as its reply."""
     if tool_messages:
-        quote = message if len(message) <= 120 else f"{message[:117]}..."
-        tool_messages[
-            -1
-        ].content += f'\n\n[Reply to the user in the same language as their message: "{quote}"]'
+        tool_messages[-1].content += f"\n\n{reply_instruction(message)}"
     return tool_messages
 
 

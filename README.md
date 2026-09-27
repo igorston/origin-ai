@@ -174,7 +174,7 @@ A etapa de roteamento roda com temperatura 0 (`AGENT_ROUTING_TEMPERATURE`), porq
 
 **Verificação de afirmações.** Às vezes o modelo diz "anotei!" sem ter chamado o `remember`. Se a resposta final afirma um efeito (salvar, apagar) cuja tool não rodou naquele turno, o agente faz um turno curto de verificação: o modelo chama a tool agora, para a afirmação virar verdade, ou responde `NONE`. O turno extra só acontece quando uma dessas afirmações aparece.
 
-**Idioma.** As saídas das tools são em inglês e são a última coisa que o modelo lê antes de responder, o que fazia modelos pequenos responderem em inglês. Por isso, o agente anexa à saída um lembrete que cita a mensagem do próprio usuário.
+**Idioma.** As saídas das tools são em inglês e são a última coisa que o modelo lê antes de responder, o que fazia modelos pequenos responderem em inglês. Por isso, o agente detecta o idioma da mensagem (português, inglês ou espanhol, por palavras comuns) e anexa à saída da tool uma instrução **escrita nesse idioma** ("Responda ao usuário em português..."). Duas tentativas anteriores falharam: citar a mensagem do usuário fazia o modelo repeti-la como resposta, e uma instrução em inglês ("reply in Portuguese") ainda puxava palavras em inglês. Limitação conhecida: em cerca de 1 a cada 35 respostas após uma tool, ainda escapa uma palavra em inglês ("algo else").
 
 ### Avaliação do agente
 

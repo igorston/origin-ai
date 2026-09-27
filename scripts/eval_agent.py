@@ -78,8 +78,9 @@ def remembered(*needles: str) -> Check:
     )
 
 
+# "Okay" is deliberately absent: it is a common loanword in Brazilian Portuguese.
 EN_MARKERS = re.compile(
-    r"\b(I|I've|I'll|you|your|okay|saved|noted|let me know|anything else)\b", re.IGNORECASE
+    r"\b(I|I've|I'll|you|your|saved|noted|let me know|anything else|else|note)\b", re.IGNORECASE
 )
 
 
@@ -352,7 +353,13 @@ async def run_case(case: Case, settings, embeddings) -> tuple[bool, float, ChatR
         for meta, text in zip(stored["metadatas"], stored["documents"], strict=True)
         if not meta.get("archived")
     ]
-    return all(check(result, memories) for check in case.checks), elapsed, result
+    # Every case: the reply must not just parrot the user's message back.
+    echoed = normalize(result.text).startswith(normalize(case.message))
+    return not echoed and all(check(result, memories) for check in case.checks), elapsed, result
+
+
+def normalize(text: str) -> str:
+    return re.sub(r"\W+", " ", text).strip().lower()
 
 
 async def main() -> None:
