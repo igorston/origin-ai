@@ -80,6 +80,15 @@ class PreparedTurn:
     trimmed: int = 0
     before: ContextUsage | None = None
     scale: float = 1.0
+    # Stored messages the model sees, with their token counts (for the context report).
+    rows: list[StoredMessage] = field(default_factory=list)
+
+
+@dataclass
+class CountedTurn:
+    role: str
+    content: str
+    tokens: int
 
 
 def closed_error(reason: str, usage: ContextUsage | None) -> HTTPException:
@@ -174,6 +183,7 @@ async def prepare_turn(
             scale=result.scale,
         ),
         scale=result.scale,
+        rows=list(kept),
     )
 
 
@@ -188,8 +198,12 @@ async def finish_turn(
 ) -> ContextUsage:
     """Persist the exchange (if any) and report the context after the turn."""
     user_tokens = estimate_tokens(body.message)
-    answer_tokens = usage.output_tokens if usage else estimate_tokens(answer)
-    measured = usage.input_tokens + usage.output_tokens if usage else None
+    answer_tokens = (
+        usage.output_tokens if usage and usage.output_tokens else estimate_tokens(answer)
+    )
+    # input_tokens=0: the answer came from prompts other than the conversation (the writer),
+    # so there is no measurement of the context to keep.
+    measured = usage.input_tokens + usage.output_tokens if usage and usage.input_tokens else None
     if turn.session is not None:
         await sessions.append(turn.session.id, "user", body.message, tokens=user_tokens)
         await sessions.append(
@@ -199,12 +213,14 @@ async def finish_turn(
             [call.model_dump() for call in tool_calls],
             tokens=answer_tokens,
         )
-        if measured is not None:
-            await sessions.update(turn.session.id, context_tokens=measured)
+        # Without a fresh measurement the old one no longer describes the context.
+        await sessions.update(turn.session.id, context_tokens=measured or 0)
+    # Real token counts where known: estimating a 2000-word story from its characters
+    # reported the context at 112% when it was far below that.
     history = [
-        *turn.history,
-        ChatTurn(role="user", content=body.message),
-        ChatTurn(role="assistant", content=answer),
+        *(turn.rows or turn.history),
+        CountedTurn("user", body.message, user_tokens),
+        CountedTurn("assistant", answer, answer_tokens),
     ]
     return context.usage(
         turn.summary,

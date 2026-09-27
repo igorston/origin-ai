@@ -228,7 +228,47 @@ def guard_details(sources: Sequence[str], summary: str) -> tuple[str, int]:
     return join_sections(parts), added
 
 
+HEADING = re.compile(r"^(#{1,2}) +(.+?)\s*$", re.M)
+ENDING_CHARS = 240
+
+
+def piece_outline(text: str) -> str | None:
+    """A line recording a story or poem the assistant wrote (writer replies start with a
+    heading). Summarizing one, the model kept the plot but lost the title and chapters,
+    then invented them when asked, so they are copied from the text itself."""
+    if not text.lstrip().startswith("#"):
+        return None
+    headings = HEADING.findall(text)
+    title = next((heading for level, heading in headings if level == "#"), "")
+    chapters = [heading for level, heading in headings if level == "##"]
+    ending = " ".join(text.split())[-ENDING_CHARS:]
+    ending = ending[ending.find(" ") + 1 :] if len(text) > ENDING_CHARS else ending
+    line = (
+        f'- Piece written by the assistant: "{title}"'
+        if title
+        else ("- Continuation written by the assistant")
+    )
+    if chapters:
+        line += f"; chapters: {'; '.join(chapters)}"
+    return f'{line}; it ends: "...{ending}"'
+
+
 # ---------------------------------------------------------------- summarizer
+
+
+MAX_TURN_CHARS = 4000
+
+
+def _shorten(text: str) -> str:
+    """A 2000-word story plus the summary prompt would overflow the summarizer's own
+    window (Ollama would then cut the instructions): keep its beginning and end."""
+    if len(text) <= MAX_TURN_CHARS:
+        return text
+    head, tail = MAX_TURN_CHARS * 5 // 8, MAX_TURN_CHARS * 3 // 8
+    # Chapter headings of the cut middle stay, so a story's structure survives.
+    headings = re.findall(r"^#{1,3} .+$", text[head:-tail], re.M)
+    parts = [text[:head], *headings, text[-tail:]]
+    return "\n[...]\n".join(parts)
 
 
 class ConversationSummarizer:
@@ -256,7 +296,7 @@ class ConversationSummarizer:
         only when the facts alone no longer fit (starting a continued conversation)."""
         words = max(40, int((max_tokens or self.max_tokens) * 0.6))
         transcript = "\n".join(
-            f"{'User' if t.role == 'user' else 'Assistant'}: {t.content}" for t in turns
+            f"{'User' if t.role == 'user' else 'Assistant'}: {_shorten(t.content)}" for t in turns
         )
         if transcript:
             instruction = transcript
@@ -278,7 +318,10 @@ class ConversationSummarizer:
             return join_sections(new), 0
         previous = split_sections(summary) if summary else dict.fromkeys(SECTIONS, "")
         # PRESERVED is maintained here, not by the model.
-        new["PRESERVED"] = previous["PRESERVED"]
+        pieces = [piece_outline(t.content) for t in turns if t.role == "assistant"]
+        new["PRESERVED"] = "\n".join(
+            line for line in [previous["PRESERVED"], *pieces] if line and line.strip("- ")
+        )
         sources = [t.content for t in turns if t.role == "user"]
         sources += [previous["USER FACTS"], previous["PRESERVED"]]
         return guard_details(sources, join_sections(new))
@@ -482,6 +525,18 @@ class ContextManager:
                 if compressed:
                     preserved += await condense()
                 record(len(fold), compressed, preserved)
+
+        # MIN_RECENT is a preference, not a floor: when even the last messages do not fit (a
+        # long story alone can fill the window), they are folded too rather than closing.
+        if self.summarizer is not None and result.turns and current().percent > 1:
+            fold, result.turns = result.turns, []
+            result.summary, preserved = await self.summarizer.fold(
+                result.summary, fold, b.summary_budget
+            )
+            compressed = over_budget() and can_condense()
+            if compressed:
+                preserved += await condense()
+            record(len(fold), compressed, preserved)
 
         # Last resort before closing: spend what is left of the condensations.
         while current().percent > 1 and self.summarizer and result.summary and can_condense():

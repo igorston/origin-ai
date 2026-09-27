@@ -342,3 +342,59 @@ async def test_carry_over_fits_the_budget_even_if_facts_must_shrink() -> None:
 
     small = await ContextManager(budget(), StubbornSummarizer(), 50).carry_over("oi", turns(1))
     assert small.startswith("oi")  # nothing to condense
+
+
+async def test_a_huge_last_message_is_folded_instead_of_closing_the_chat() -> None:
+    manager = ContextManager(budget(), FakeSummarizer(), base_tokens=50)
+    story = [
+        ChatTurn(role="user", content="Crie uma história longa"),
+        ChatTurn(role="assistant", content="# Título\n\n" + "Era uma vez. " * 200),  # > window
+    ]
+    result = await manager.optimize("", story, "gostei!")
+    assert result.turns == [] and "Crie uma história" in result.summary
+    assert manager.usage(result.summary, result.turns, "gostei!").percent <= 1
+
+
+def test_summarizer_input_keeps_the_start_and_end_of_long_messages() -> None:
+    from origin.core.context import MAX_TURN_CHARS, _shorten
+
+    text = "início " + "x" * 10_000 + " fim"
+    short = _shorten(text)
+    assert len(short) < MAX_TURN_CHARS + 20 and short.startswith("início") and short.endswith("fim")
+    assert _shorten("curto") == "curto"
+
+
+def test_shortened_stories_keep_their_chapter_headings() -> None:
+    from origin.core.context import _shorten
+
+    chapters = "".join(f"## Capítulo {i}\n\n" + "texto " * 300 + "\n\n" for i in range(1, 6))
+    short = _shorten("# A História\n\n" + chapters)
+    assert all(f"## Capítulo {i}" in short for i in range(1, 6))
+
+
+def test_written_pieces_are_recorded_verbatim_in_the_summary() -> None:
+    from origin.core.context import piece_outline
+
+    story = (
+        "# O Pacto da Sombra\n\n## O Último Conselho\n\nTexto.\n\n"
+        "## A Coroa de Fogo\n\nE assim terminou."
+    )
+    line = piece_outline(story)
+    assert '"O Pacto da Sombra"' in line and "O Último Conselho; A Coroa de Fogo" in line
+    assert line.endswith('E assim terminou."')
+    assert piece_outline("## Parte 2\n\nContinua.").startswith("- Continuation")
+    assert piece_outline("Uma resposta normal.") is None
+
+
+async def test_summarizer_records_pieces_in_preserved() -> None:
+    model = ScriptedChatModel(
+        responses=[AIMessage("### USER FACTS\n-\n### TOPICS\n- Uma história\n### PRESERVED\n-")]
+    )
+    summary, _ = await ConversationSummarizer(model, max_tokens=200).fold(
+        "",
+        [
+            ChatTurn(role="user", content="Crie uma história"),
+            ChatTurn(role="assistant", content="# O Farol\n\n## A Noite\n\nFim."),
+        ],
+    )
+    assert '"O Farol"; chapters: A Noite' in split_sections(summary)["PRESERVED"]

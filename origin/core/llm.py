@@ -34,6 +34,7 @@ from origin.core.agent import (
 from origin.core.context import JSON_CHARS_PER_TOKEN, estimate_tokens
 from origin.core.language import LANGUAGE_NAMES, detect_language, reply_instruction
 from origin.core.script_guard import ScriptGuard, guard_needed
+from origin.core.writer import StoryWriter, writing_task
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
 from origin.retry import (
@@ -263,16 +264,38 @@ class LLMEngine:
         """Agent loop: yields text chunks as they stream, a record per executed tool call,
         and finally the token usage of the answer (when the model reports it)."""
         timings = TurnTimings()
+        guarded = guard_needed(message)
+
+        async def repair(context: str, fragment: str) -> str:
+            return await self._repair_script(context, fragment, message)
+
+        if task := writing_task(message, history):
+            # Stories and poems get a writer (plan + scenes) instead of the assistant loop.
+            with timings.phase("context"):
+                memories = await self._recall(message, history) if use_memory else None
+            writer = StoryWriter(
+                self.model,
+                self.language_of(message),
+                guard=lambda: ScriptGuard(repair) if guarded else None,
+                retry=self.retry,
+            )
+            try:
+                async for text in writer.write(task, message, memories or ""):
+                    timings.first_token()
+                    yield text
+            finally:
+                logger.info("Turn timings: %s | writer=%s", timings, task.kind)
+            # The writer's prompts are not the conversation's, so only the output counts
+            # (input_tokens=0: the next turn estimates the context instead of trusting it).
+            yield TurnUsage(input_tokens=0, output_tokens=writer.output_tokens)
+            return
+
         bound, tools = self._bind_tools(use_tools)
         with timings.phase("context"):
             messages = await self._build_messages(
                 message, history, use_memory, bool(tools), summary
             )
         executed: list[ToolCallRecord] = []
-        guarded = guard_needed(message)
-
-        async def repair(context: str, fragment: str) -> str:
-            return await self._repair_script(context, fragment, message)
 
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
             with timings.phase("tools"):
@@ -370,6 +393,11 @@ class LLMEngine:
         finally:
             logger.info("Turn timings: %s | tools=%s", timings, [r.name for r in executed])
 
+    def language_of(self, text: str) -> str:
+        """Name of the language to write in; undetected, the configured locale (showing the
+        model the text instead made it translate that text)."""
+        return LANGUAGE_NAMES.get(detect_language(text) or self.locale[:2], "English")
+
     async def _repair_script(self, context: str, fragment: str, message: str = "") -> str:
         """Translate a script slip for the ScriptGuard. Qwen translates Chinese into English
         well but into Portuguese poorly ("武士刀" -> "bushinato"; via English: "Katana"), and
@@ -384,9 +412,7 @@ class LLMEngine:
             return reply.text.strip()
 
         # The reply so far may be too short to tell ("Gandalf, o"): the message helps.
-        # Undetected: the configured locale (showing the text instead made it translate that).
-        detected = detect_language(f"{message} {context}") or self.locale[:2]
-        target = LANGUAGE_NAMES.get(detected, "English")
+        target = self.language_of(f"{message} {context}")
         english = await translate(fragment, "English")
         return english if target == "English" else await translate(english, target)
 

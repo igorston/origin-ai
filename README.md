@@ -288,9 +288,22 @@ A etapa de roteamento roda com temperatura 0 (`AGENT_ROUTING_TEMPERATURE`), porq
 - uma instrução em inglês ("reply in Portuguese") ainda puxava palavras em inglês ("algo else");
 - uma frase de exemplo na instrução fazia o modelo copiar os fatos do exemplo para respostas reais.
 
-**Textos longos e troca de alfabeto.** O prompt de sistema pede respostas curtas para perguntas e conversa, e a peça completa para pedidos criativos: uma história contada em cenas, com personagens, diálogo e final, e nunca uma sinopse. Antes, um "seja conciso" genérico transformava "crie uma história" num resumo de um parágrafo.
+**Histórias e poemas.** Pedidos criativos ("crie uma história…", "me conta um conto curto…", "faça um poema…", "continue a história") vão para um escritor (`origin/core/writer.py`), não para o loop do agente. Antes eles tinham dois problemas:
 
-Os modelos Qwen às vezes trocam para o chinês no meio da frase ("Gandalf, o灰袍巫师, decidiu…"). Isso aconteceu em cerca de 1 de cada 3 histórias do Gandalf, e nem o prompt nem `top_p` resolveram. O `ScriptGuard` (`origin/core/script_guard.py`) segura no streaming qualquer trecho em caracteres chineses, japoneses ou coreanos. O trecho é traduzido primeiro para o inglês e depois para o idioma da resposta, porque o Qwen traduz bem do chinês para o inglês e mal direto para o português ("武士刀" → "bushinato"; passando pelo inglês, "Katana"). A tradução entra encaixada na frase, com espaço, sem artigo repetido e com minúscula no meio da frase, e o texto continua. Resultado: "Gandalf, o feiticeiro de robe cinza, caminhava…", com 0 caracteres estrangeiros em 24 histórias. O guard fica desligado quando o usuário escreve nesses alfabetos ou pergunta sobre um idioma ("como se escreve obrigado em japonês?"). Se a tradução falhar, o trecho é removido.
+- Sob o prompt de assistente, o `qwen3:8b` entregava uma sinopse de ~250 palavras, sem título.
+- Quando lhe pediam 1.500 palavras numa chamada só, ele enchia o texto repetindo os mesmos parágrafos até 6 vezes.
+
+Modelos pequenos escrevem bem em trechos curtos, então o escritor trabalha em etapas:
+
+1. **Plano:** título, personagens e 5 cenas com acontecimentos diferentes (3 se o pedido disser "curto", 8 se disser "longo").
+2. **Uma chamada por cena:** cada cena é transmitida em streaming e recebe o plano e o final da cena anterior.
+3. **Filtro de repetição:** descarta frases já escritas e encerra uma cena que entrar em loop.
+
+A história chega com título (`#`) e capítulos (`##`). Na prática, são cerca de 2.000 palavras em ~1,5 min, com 0 frases repetidas. Um conto "curto" fica em ~1.000 palavras em 50 s, e um poema leva ~7 s.
+
+"Continue a história" planeja o que vem **depois**, sem recontar. Quando a história sai do contexto e vai para o resumo, o código grava literalmente na seção PRESERVED o título, os capítulos e o final. Antes, o modelo resumia o enredo, mas perdia o título e os capítulos, e depois os inventava quando perguntado.
+
+**Troca de alfabeto.** Os modelos Qwen às vezes trocam para o chinês no meio da frase ("Gandalf, o灰袍巫师, decidiu…"). Isso aconteceu em cerca de 1 de cada 3 histórias do Gandalf, e nem o prompt nem `top_p` resolveram. O `ScriptGuard` (`origin/core/script_guard.py`) segura no streaming qualquer trecho em caracteres chineses, japoneses ou coreanos. O trecho é traduzido primeiro para o inglês e depois para o idioma da resposta, porque o Qwen traduz bem do chinês para o inglês e mal direto para o português ("武士刀" → "bushinato"; passando pelo inglês, "Katana"). A tradução entra encaixada na frase, com espaço, sem artigo repetido e com minúscula no meio da frase, e o texto continua. Resultado: "Gandalf, o feiticeiro de robe cinza, caminhava…", com 0 caracteres estrangeiros em 24 histórias. O guard fica desligado quando o usuário escreve nesses alfabetos ou pergunta sobre um idioma ("como se escreve obrigado em japonês?"). Se a tradução falhar, o trecho é removido.
 
 ### Falhas transitórias do Ollama
 
