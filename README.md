@@ -188,7 +188,10 @@ O modelo decide sozinho quando chamar uma tool. O Origin executa a chamada, devo
 | `remember` | Salva um fato sobre você ("Lembre que...", "Mudei de..."), sem duplicar e arquivando o que ficou desatualizado |
 | `forget` | Apaga uma memória por id ou descrição ("Esquece aquilo da...") |
 | `get_current_datetime` | Data, hora e dia da semana locais, no idioma de `ORIGIN_LOCALE` |
-| `days_until` | Dias até uma data (`MM-DD` = próxima ocorrência, ou `YYYY-MM-DD`) |
+| `days_until` | Quantos dias faltam até uma data conhecida (`MM-DD` = próxima ocorrência, ou `YYYY-MM-DD`) |
+| `date_offset` | Qual é a data de um dia relativo a hoje ("ontem", "daqui a um ano", "há 3 meses"), com o dia da semana |
+
+Modelos pequenos erram contas de calendário. Sem a `date_offset`, "daqui a um ano" virava uma data chutada e "ontem" vinha com o dia da semana errado: 3/18 acertos, contra 60/60 com a tool. A regra geral é que toda aritmética de datas acontece no código, nunca no modelo.
 
 **Criando uma tool:** crie um módulo em `origin/integrations/tools/` que exponha `get_tools(ctx)`. Ele é descoberto automaticamente na inicialização, sem nenhum registro manual.
 
@@ -241,9 +244,9 @@ Primeiro token pelo `/chat/events`, em um servidor recém-iniciado: **~0,2 a 0,5
 
 ### Avaliação do agente
 
-`scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma), `question` (perguntas sobre fatos salvos são respondidas, não salvas de novo), `memory` (duplicatas, substituições e esquecimento) e `followup` (recuperar fatos pelo contexto). Todo caso também reprova respostas que só repetem a mensagem do usuário.
+`scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `dates` (datas relativas a hoje), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma), `question` (perguntas sobre fatos salvos são respondidas, não salvas de novo), `memory` (duplicatas, substituições e esquecimento) e `followup` (recuperar fatos pelo contexto). Todo caso também reprova respostas que só repetem a mensagem do usuário.
 
-Resultado atual (qwen3:8b, 10 runs por caso): **360/360**. Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
+Resultado atual (qwen3:8b, 10 runs por caso): **420/420**. Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
 
 ```bash
 python scripts/eval_agent.py                          # configuração atual, 3 runs por caso

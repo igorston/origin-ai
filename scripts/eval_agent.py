@@ -10,12 +10,13 @@ Each case runs against a fresh, isolated in-memory Chroma collection.
 
 import argparse
 import asyncio
+import calendar
 import re
 import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -38,6 +39,41 @@ def days_to(month: int, day: int) -> int:
     if target < TODAY:
         target = target.replace(year=TODAY.year + 1)
     return (target - TODAY).days
+
+
+def shift(days: int = 0, weeks: int = 0, months: int = 0, years: int = 0) -> date:
+    month_index = TODAY.month - 1 + months + 12 * years
+    year, month = TODAY.year + month_index // 12, month_index % 12 + 1
+    day = min(TODAY.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day) + timedelta(days=days, weeks=weeks)
+
+
+MONTHS_PT = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]  # fmt: skip
+WEEKDAYS_PT = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+
+
+def says_date(target: date, weekday_required: bool = False) -> "Check":
+    """Reply names the right day, month and year (if not the current one). A weekday is
+    only required when asked for, but any weekday mentioned must be the right one."""
+
+    def check(r: ChatResult, _: object) -> bool:
+        text = r.text.lower()
+        day_ok = re.search(rf"\b0?{target.day}\b", text) is not None
+        month_ok = MONTHS_PT[target.month - 1] in text or re.search(
+            rf"\b0?{target.day}/0?{target.month}\b", text
+        )
+        year_ok = target.year == TODAY.year or str(target.year) in text
+        correct = WEEKDAYS_PT[target.weekday()]
+        mentioned = [w for w in WEEKDAYS_PT if w in text]
+        weekday_ok = all(w == correct for w in mentioned) and (
+            correct in mentioned or not weekday_required
+        )
+        return bool(day_ok and month_ok and year_ok and weekday_ok)
+
+    return check
 
 
 DAYS_TO_XMAS = days_to(12, 25)
@@ -184,6 +220,17 @@ CASES = [
     ),
     Case("single", "Que dia é hoje?", [says(WEEKDAY_PT)]),
     Case("single", "Quantos dias faltam para o Natal?", [number(DAYS_TO_XMAS)]),
+    # relative dates: the model must not do calendar arithmetic itself
+    Case("dates", "Que dia será daqui a um ano?", [says_date(shift(years=1))]),
+    Case("dates", "Que dia foi ontem?", [says_date(shift(days=-1))]),
+    Case("dates", "Que dia vai ser daqui a duas semanas?", [says_date(shift(weeks=2))]),
+    Case(
+        "dates",
+        "Que dia da semana vai ser daqui a 100 dias?",
+        [says_date(shift(days=100), weekday_required=True)],
+    ),
+    Case("dates", "Que data era há 3 meses?", [says_date(shift(months=-3))]),
+    Case("dates", "Que dia é amanhã?", [says_date(shift(days=1))]),
     Case(
         "single",
         "Como se chama o meu cachorro?",

@@ -23,7 +23,7 @@ def tools_for(memory: VectorMemory | None = None, llm: object = None, **settings
     return ToolRegistry.discover(ToolContext(Settings(**settings), memory, llm=llm)).tools
 
 
-BUILTIN_TOOLS = {"remember", "forget", "get_current_datetime", "days_until"}
+BUILTIN_TOOLS = {"remember", "forget", "get_current_datetime", "days_until", "date_offset"}
 
 
 def test_discover_loads_builtin_plugins(memory: VectorMemory) -> None:
@@ -105,6 +105,37 @@ def test_days_until_next_occurrence() -> None:
     assert days_until.invoke({"target_date": "12-25"}).startswith("days: 90\n")
     assert days_until.invoke({"target_date": "01-01"}).startswith("days: 97\n")
     assert days_until.invoke({"target_date": "2026-09-20"}).startswith("days: -6\n")
+
+
+@pytest.mark.usefixtures("frozen_clock")
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ({"years": 1}, "date: 2027-09-26 (domingo)\n"),
+        ({"days": -1}, "date: 2026-09-25 (sexta-feira)\n"),
+        ({"weeks": 2}, "date: 2026-10-10 (sábado)\n"),
+        ({"months": -3}, "date: 2026-06-26 (sexta-feira)\n"),
+        ({}, "date: 2026-09-26 (sábado)\n"),
+    ],
+)
+def test_date_offset(args: dict, expected: str) -> None:
+    output = tools_for(origin_locale="pt-BR")["date_offset"].invoke(args)
+    assert output.startswith(expected)
+    assert "today: 2026-09-26 (sábado)" in output
+
+
+@pytest.mark.parametrize(
+    ("start", "kwargs", "expected"),
+    [
+        (date(2026, 1, 31), {"months": 1}, date(2026, 2, 28)),  # clamps to month end
+        (date(2024, 2, 29), {"years": 1}, date(2025, 2, 28)),  # leap day
+        (date(2026, 12, 15), {"months": 1}, date(2027, 1, 15)),  # year rollover
+        (date(2026, 3, 15), {"months": -3}, date(2025, 12, 15)),
+        (date(2026, 9, 27), {"years": 1, "days": 1}, date(2027, 9, 28)),
+    ],
+)
+def test_shift_date(start: date, kwargs: dict, expected: date) -> None:
+    assert clock.shift_date(start, **kwargs) == expected
 
 
 @pytest.mark.parametrize(
