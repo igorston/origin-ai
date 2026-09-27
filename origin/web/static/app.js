@@ -14,15 +14,21 @@ const el = {
   input: $("#input"),
   send: $("#send"),
   stop: $("#stop"),
-  useMemory: $("#use-memory"),
-  useTools: $("#use-tools"),
   health: $("#health"),
+  memoryCount: $("#memory-count"),
+  settingsHint: $("#settings-hint"),
+  // memory manager
+  memoryDialog: $("#memory-dialog"),
   memoryStats: $("#memory-stats"),
   memorySearch: $("#memory-search"),
-  showArchived: $("#show-archived"),
+  memorySource: $("#memory-source"),
+  memoryList: $("#memory-list"),
   addMemory: $("#add-memory"),
   memoryText: $("#memory-text"),
-  memoryList: $("#memory-list"),
+  // settings
+  settingsDialog: $("#settings-dialog"),
+  useMemory: $("#use-memory"),
+  useTools: $("#use-tools"),
   toolList: $("#tool-list"),
   systemInfo: $("#system-info"),
   toast: $("#toast"),
@@ -31,10 +37,12 @@ const el = {
 const state = {
   sessionId: null,
   streaming: null, // AbortController of the in-flight turn
+  memory: { status: "active", editing: null },
 };
 
-// Tools that change stored memories; after they run, the memory panel is refreshed.
+// Tools that change stored memories; after they run, memory views are refreshed.
 const MEMORY_TOOLS = new Set(["remember", "forget"]);
+const SOURCE_LABELS = { agent: "agente", manual: "manual" };
 
 // ---------------------------------------------------------------- helpers
 
@@ -56,7 +64,7 @@ function toast(message, kind = "error") {
   el.toast.className = `toast ${kind}`;
   el.toast.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => (el.toast.hidden = true), 5000);
+  toast.timer = setTimeout(() => (el.toast.hidden = true), 4000);
 }
 
 function formatDate(iso) {
@@ -80,6 +88,11 @@ function describeError(error) {
   if (error instanceof ApiError) return error.message;
   if (error.name === "TypeError") return "Não foi possível falar com o servidor do Origin.";
   return error.message || String(error);
+}
+
+function openDialog(dialog) {
+  closeDrawers();
+  if (!dialog.open) dialog.showModal();
 }
 
 // ---------------------------------------------------------------- health
@@ -211,6 +224,11 @@ function addUserMessage(text, at) {
   );
 }
 
+function summarizeArgs(args = {}) {
+  const text = Object.values(args).map((v) => (typeof v === "string" ? v : JSON.stringify(v))).join(", ");
+  return text.length > 60 ? `${text.slice(0, 57)}…` : text;
+}
+
 function toolCard(call) {
   const args = Object.keys(call.args || {}).length ? JSON.stringify(call.args, null, 2) : "(sem argumentos)";
   return h("details", { class: "tool-call" },
@@ -222,19 +240,13 @@ function toolCard(call) {
   );
 }
 
-function summarizeArgs(args = {}) {
-  const text = Object.values(args).map((v) => (typeof v === "string" ? v : JSON.stringify(v))).join(", ");
-  return text.length > 60 ? `${text.slice(0, 57)}…` : text;
-}
-
 /** Create an assistant message; returns handles to update it while streaming. */
 function addAssistantMessage({ text = "", toolCalls = [], at = null, pending = false } = {}) {
   el.empty.hidden = true;
   const tools = h("div", { class: "tool-calls" }, toolCalls.map(toolCard));
   const content = h("div", { class: "content" });
   const meta = h("div", { class: "meta" }, at ? formatDate(at) : "");
-  const bubble = h("div", { class: "bubble" }, tools, content);
-  const article = h("article", { class: `message assistant${pending ? " pending" : ""}` }, bubble, meta);
+  const article = h("article", { class: `message assistant${pending ? " pending" : ""}` }, h("div", { class: "bubble" }, tools, content), meta);
   el.messages.append(article);
 
   let raw = text;
@@ -254,7 +266,6 @@ function addAssistantMessage({ text = "", toolCalls = [], at = null, pending = f
       render();
       content.append(h("p", { class: "error-text" }, `⚠ ${message}`));
     },
-    get text() { return raw; },
   };
 }
 
@@ -304,13 +315,11 @@ async function send(message) {
     }
     reply.finish();
   } catch (error) {
-    if (error.name === "AbortError") reply.fail("Geração interrompida.");
-    else reply.fail(describeError(error));
+    reply.fail(error.name === "AbortError" ? "Geração interrompida." : describeError(error));
   } finally {
-    const total = performance.now() - started;
     const parts = [formatDate(new Date().toISOString())];
     if (firstToken != null) parts.push(`1º token ${seconds(firstToken)}`);
-    parts.push(`total ${seconds(total)}`);
+    parts.push(`total ${seconds(performance.now() - started)}`);
     if (toolCount) parts.push(`${toolCount} tool${toolCount > 1 ? "s" : ""}`);
     reply.setMeta(parts.join(" · "));
     setStreaming(null);
@@ -331,58 +340,128 @@ function setStreaming(controller) {
   if (!controller) el.input.focus();
 }
 
-// ---------------------------------------------------------------- memory panel
+// ---------------------------------------------------------------- memory manager
+
+let records = new Map(); // id -> record, from the last full listing (resolves "superseded by")
 
 async function refreshMemory() {
   const query = el.memorySearch.value.trim();
+  const { status } = state.memory;
+  const source = el.memorySource.value;
   try {
-    const [stats, items] = await Promise.all([
-      api.memoryStats(),
-      query ? api.searchMemory(query) : api.memories(),
-    ]);
+    const [stats, all] = await Promise.all([api.memoryStats(), api.memories(1000)]);
+    records = new Map(all.map((r) => [r.id, r]));
+    el.memoryCount.textContent = stats.active || "";
     el.memoryStats.textContent =
       `${stats.active} ativa${stats.active === 1 ? "" : "s"} · ${stats.archived} arquivada${stats.archived === 1 ? "" : "s"}`;
-    const visible = items.filter((m) => el.showArchived.checked || !m.metadata.archived);
-    el.memoryList.replaceChildren(...visible.map(memoryItem));
-    if (!visible.length) {
-      el.memoryList.append(h("li", { class: "muted small" }, query ? "Nenhuma memória relevante." : "Nenhuma memória salva."));
+    if (!el.memoryDialog.open) return;
+
+    // Semantic search only covers active memories; archived ones are matched by text.
+    let items = query ? await api.searchMemory(query, 50) : all;
+    if (query && status !== "active") {
+      const needle = query.toLowerCase();
+      items = [...items, ...all.filter((r) => r.metadata.archived && r.content.toLowerCase().includes(needle))];
+    }
+    items = items.filter((m) => {
+      const archived = Boolean(m.metadata.archived);
+      if (status === "active" && archived) return false;
+      if (status === "archived" && !archived) return false;
+      return !source || (m.metadata.source || "") === source;
+    });
+
+    el.memoryList.replaceChildren(...items.map(memoryRow));
+    if (!items.length) {
+      el.memoryList.append(
+        h("li", { class: "memory-empty" },
+          query ? "Nenhuma memória corresponde à busca." : status === "archived" ? "Nenhuma memória arquivada." : "Nenhuma memória ainda. Diga ao Origin \"lembra que…\" ou adicione uma aqui."),
+      );
     }
   } catch (error) {
     el.memoryStats.textContent = describeError(error);
   }
 }
 
-function memoryItem(memory) {
+function memoryRow(memory) {
   const meta = memory.metadata || {};
-  const tags = [
-    meta.source ? h("span", { class: "badge" }, meta.source) : null,
-    memory.score != null ? h("span", { class: "badge" }, `score ${memory.score.toFixed(2)}`) : null,
-    meta.archived ? h("span", { class: "badge warn", title: meta.superseded_by ? "Substituída por um fato mais novo" : "" }, "arquivada") : null,
-    meta.created_at ? h("span", { class: "muted small" }, formatDate(meta.created_at)) : null,
+  const editing = state.memory.editing === memory.id;
+  const supersededBy = meta.superseded_by && records.get(meta.superseded_by);
+
+  const chips = [
+    h("span", { class: "badge" }, SOURCE_LABELS[meta.source] || meta.source || "—"),
+    meta.created_at ? h("span", { class: "muted small", title: new Date(meta.created_at).toLocaleString("pt-BR") }, formatDate(meta.created_at)) : null,
+    meta.edited_at ? h("span", { class: "badge", title: `Editada em ${new Date(meta.edited_at).toLocaleString("pt-BR")}` }, "editada") : null,
+    memory.score != null ? h("span", { class: "badge", title: "Similaridade com a busca" }, `score ${memory.score.toFixed(2)}`) : null,
+    meta.archived ? h("span", { class: "badge warn" }, "arquivada") : null,
+    supersededBy ? h("span", { class: "muted small" }, `substituída por "${supersededBy.content}"`) : null,
   ];
-  return h("li", { class: `memory${meta.archived ? " archived" : ""}` },
-    h("p", {}, memory.content),
-    h("div", { class: "memory-meta" }, tags,
-      h("span", { class: "spacer" }),
-      meta.archived
-        ? h("button", { class: "link", type: "button", onclick: () => mutateMemory(() => api.restoreMemory(memory.id)) }, "restaurar")
-        : null,
-      h("button", { class: "link danger", type: "button",
-        onclick: () => confirm(`Apagar "${memory.content}"?`) && mutateMemory(() => api.deleteMemory(memory.id)) }, "apagar"),
+
+  const body = editing ? memoryEditor(memory) : h("p", { class: "memory-content", title: "Clique duas vezes para editar", ondblclick: () => startEdit(memory.id) }, memory.content);
+
+  const actions = editing
+    ? null
+    : h("div", { class: "memory-actions" },
+        h("button", { class: "link", type: "button", onclick: () => startEdit(memory.id) }, "editar"),
+        h("button", { class: "link", type: "button",
+          onclick: () => mutateMemory(() => api.updateMemory(memory.id, { archived: !meta.archived }), meta.archived ? "Memória restaurada." : "Memória arquivada.") },
+          meta.archived ? "restaurar" : "arquivar"),
+        h("button", { class: "link danger", type: "button",
+          onclick: () => confirm(`Apagar definitivamente "${memory.content}"?`) && mutateMemory(() => api.deleteMemory(memory.id), "Memória apagada.") },
+          "apagar"),
+      );
+
+  return h("li", { class: `memory-row${meta.archived ? " archived" : ""}${editing ? " editing" : ""}`, "data-id": memory.id },
+    h("div", { class: "memory-main" }, body, h("div", { class: "memory-meta" }, chips)),
+    actions,
+  );
+}
+
+function memoryEditor(memory) {
+  const textarea = h("textarea", { class: "field", rows: 2 });
+  textarea.value = memory.content;
+  const save = async () => {
+    const content = textarea.value.trim();
+    if (!content) return toast("O texto da memória não pode ficar vazio.");
+    state.memory.editing = null;
+    if (content === memory.content) return refreshMemory();
+    await mutateMemory(() => api.updateMemory(memory.id, { content }), "Memória atualizada.");
+  };
+  const cancel = () => { state.memory.editing = null; refreshMemory(); };
+  textarea.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); save(); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); }
+  });
+  queueMicrotask(() => { textarea.focus(); textarea.setSelectionRange(textarea.value.length, textarea.value.length); });
+  return h("div", { class: "memory-editor" },
+    textarea,
+    h("div", { class: "row-actions" },
+      h("span", { class: "muted small" }, "Enter salva · Esc cancela"),
+      h("button", { class: "button", type: "button", onclick: cancel }, "Cancelar"),
+      h("button", { class: "button primary", type: "button", onclick: save }, "Salvar"),
     ),
   );
 }
 
-async function mutateMemory(action) {
+function startEdit(id) {
+  state.memory.editing = id;
+  refreshMemory();
+}
+
+async function mutateMemory(action, success) {
   try {
     await action();
-    await refreshMemory();
+    if (success) toast(success, "info");
   } catch (error) {
     toast(describeError(error));
   }
+  await refreshMemory();
 }
 
-// ---------------------------------------------------------------- tools panel
+function openMemory() {
+  openDialog(el.memoryDialog);
+  refreshMemory();
+}
+
+// ---------------------------------------------------------------- settings
 
 async function refreshTools() {
   try {
@@ -393,7 +472,7 @@ async function refreshTools() {
           h("code", { class: "tool-name" }, tool.name),
           h("p", { class: "tool-description" }, tool.description.trim()),
           Object.keys(tool.args).length
-            ? h("div", { class: "muted small" }, "Argumentos: ", Object.keys(tool.args).map((a) => h("code", {}, a)).reduce((acc, c) => (acc.length ? [...acc, ", ", c] : [c]), []))
+            ? h("div", { class: "muted small" }, "Argumentos: ", Object.keys(tool.args).join(", "))
             : h("div", { class: "muted small" }, "Sem argumentos"),
         ),
       ),
@@ -404,18 +483,27 @@ async function refreshTools() {
   }
 }
 
+function selectTab(name) {
+  el.settingsDialog.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
+  el.settingsDialog.querySelectorAll(".tab-panel").forEach((panel) => (panel.hidden = panel.dataset.panel !== name));
+  if (name === "tools") refreshTools();
+  if (name === "system") refreshHealth();
+}
+
+function openSettings(tab = "general") {
+  openDialog(el.settingsDialog);
+  selectTab(tab);
+}
+
+function renderSettingsHint() {
+  const off = [!el.useMemory.checked && "memória", !el.useTools.checked && "tools"].filter(Boolean);
+  el.settingsHint.textContent = off.length ? `${off.join(" e ")} off` : "";
+}
+
 // ---------------------------------------------------------------- layout
 
 function closeDrawers() {
-  el.app.classList.remove("sidebar-open", "panel-open");
-}
-
-function selectTab(name) {
-  document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
-  document.querySelectorAll(".tab-panel").forEach((panel) => (panel.hidden = panel.dataset.panel !== name));
-  if (name === "memory") refreshMemory();
-  if (name === "tools") refreshTools();
-  if (name === "system") refreshHealth();
+  el.app.classList.remove("sidebar-open");
 }
 
 const INPUT_MAX_HEIGHT = 200;
@@ -444,36 +532,58 @@ el.input.addEventListener("keydown", (event) => {
 el.input.addEventListener("input", autoResize);
 el.stop.addEventListener("click", () => state.streaming?.abort());
 el.newSession.addEventListener("click", newChat);
-document.querySelectorAll(".suggestion").forEach((button) =>
-  button.addEventListener("click", () => send(button.textContent)),
-);
+document.querySelectorAll(".suggestion").forEach((button) => button.addEventListener("click", () => send(button.textContent)));
 
 $("#open-sidebar").addEventListener("click", () => el.app.classList.add("sidebar-open"));
-$("#toggle-panel").addEventListener("click", () => el.app.classList.toggle("panel-open"));
-$("#close-panel").addEventListener("click", closeDrawers);
 $("#scrim").addEventListener("click", closeDrawers);
-el.health.addEventListener("click", () => {
-  el.app.classList.add("panel-open");
-  selectTab("system");
-});
+$("#open-memory").addEventListener("click", openMemory);
+$("#open-settings").addEventListener("click", () => openSettings());
+el.health.addEventListener("click", () => openSettings("system"));
 $("#refresh-health").addEventListener("click", refreshHealth);
-document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => selectTab(tab.dataset.tab)));
+el.settingsDialog.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => selectTab(tab.dataset.tab)));
 
+for (const dialog of [el.memoryDialog, el.settingsDialog]) {
+  dialog.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  // Click on the backdrop (outside the dialog box) closes it.
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener("close", () => {
+    state.memory.editing = null;
+    el.input.focus();
+  });
+}
+
+// Memory manager controls
 let searchTimer;
 el.memorySearch.addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(refreshMemory, 300);
 });
-el.showArchived.addEventListener("change", refreshMemory);
+el.memorySource.addEventListener("change", refreshMemory);
+el.memoryDialog.querySelectorAll("[data-status]").forEach((button) =>
+  button.addEventListener("click", () => {
+    state.memory.status = button.dataset.status;
+    el.memoryDialog.querySelectorAll("[data-status]").forEach((b) => b.classList.toggle("active", b === button));
+    refreshMemory();
+  }),
+);
+$("#toggle-add").addEventListener("click", () => {
+  el.addMemory.hidden = !el.addMemory.hidden;
+  if (!el.addMemory.hidden) el.memoryText.focus();
+});
+$("#cancel-add").addEventListener("click", () => {
+  el.addMemory.hidden = true;
+  el.memoryText.value = "";
+});
 el.addMemory.addEventListener("submit", async (event) => {
   event.preventDefault();
   const texts = el.memoryText.value.split("\n").map((t) => t.trim()).filter(Boolean);
   if (!texts.length) return;
-  await mutateMemory(() => api.addMemory(texts));
+  await mutateMemory(() => api.addMemory(texts), texts.length > 1 ? `${texts.length} memórias salvas.` : "Memória salva.");
   el.memoryText.value = "";
+  el.addMemory.hidden = true;
 });
 
-// Persist the switches across reloads (a per-browser convenience only).
+// Persist the preferences across reloads (a per-browser convenience only).
 for (const input of [el.useMemory, el.useTools]) {
   try {
     const saved = localStorage.getItem(`origin:${input.id}`);
@@ -481,9 +591,11 @@ for (const input of [el.useMemory, el.useTools]) {
   } catch {}
   input.addEventListener("change", () => {
     try { localStorage.setItem(`origin:${input.id}`, input.checked); } catch {}
+    renderSettingsHint();
   });
 }
 
+renderSettingsHint();
 refreshHealth();
 refreshSessions();
 refreshMemory();

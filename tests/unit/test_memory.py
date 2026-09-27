@@ -79,6 +79,42 @@ def test_memory_api_list_restore_and_stats(client: TestClient, memory: VectorMem
     assert client.post("/memory/nope/restore").status_code == 404
 
 
+async def test_update_rewrites_and_reembeds(memory: VectorMemory) -> None:
+    (memory_id,) = await memory.add(["Moro em Recife."], {"source": "agent"})
+
+    record = await memory.update(memory_id, "Moro em Olinda.")
+
+    assert record.content == "Moro em Olinda."
+    assert record.metadata["source"] == "agent"
+    assert "edited_at" in record.metadata
+    # Fake embeddings are hash-based: only the new text matches exactly now.
+    (hit,) = await memory.search("Moro em Olinda.", k=1)
+    assert hit.id == memory_id and hit.score == pytest.approx(1.0)
+    assert await memory.update("missing", "x") is None
+
+
+def test_memory_api_patch(client: TestClient, memory: VectorMemory) -> None:
+    (memory_id,) = client.post("/memory", json={"texts": ["Moro em Recife."]}).json()["ids"]
+
+    edited = client.patch(f"/memory/{memory_id}", json={"content": "  Moro em Olinda.  "})
+    assert edited.status_code == 200
+    assert edited.json()["content"] == "Moro em Olinda."
+
+    archived = client.patch(f"/memory/{memory_id}", json={"archived": True}).json()
+    assert archived["metadata"]["archived"] is True
+    assert client.get("/memory/stats").json()["archived"] == 1
+
+    both = client.patch(
+        f"/memory/{memory_id}", json={"content": "Moro em Recife.", "archived": False}
+    )
+    assert both.json()["content"] == "Moro em Recife."
+    assert both.json()["metadata"]["archived"] is False
+
+    assert client.patch("/memory/nope", json={"content": "x"}).status_code == 404
+    assert client.patch(f"/memory/{memory_id}", json={}).status_code == 422
+    assert client.patch(f"/memory/{memory_id}", json={"content": ""}).status_code == 422
+
+
 def test_memory_api_roundtrip(client: TestClient) -> None:
     created = client.post(
         "/memory", json={"texts": ["Prefiro Python"], "metadata": {"tag": "pref"}}

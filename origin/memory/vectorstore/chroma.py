@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -6,6 +7,7 @@ import chromadb
 from chromadb.api import ClientAPI
 from chromadb.config import Settings as ChromaSettings
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_ollama import OllamaEmbeddings
 from pydantic import BaseModel
@@ -118,6 +120,16 @@ class VectorMemory:
 
     async def delete(self, ids: Sequence[str]) -> None:
         await self._store.adelete(list(ids))
+
+    async def update(self, memory_id: str, content: str) -> MemoryRecord | None:
+        """Replace a memory's text (re-embedding it); metadata is kept and marked edited."""
+        record = self.get(memory_id)
+        if record is None:
+            return None
+        metadata = {**record.metadata, "edited_at": datetime.now(UTC).isoformat()}
+        document = Document(page_content=content, metadata=metadata, id=memory_id)
+        await asyncio.to_thread(self._store.update_document, memory_id, document)
+        return self.get(memory_id)
 
     def archive(self, memory_id: str, superseded_by: str = "") -> None:
         """Hide a memory from recall without destroying it (reversible with `restore`)."""

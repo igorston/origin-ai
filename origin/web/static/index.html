@@ -18,21 +18,25 @@
         </header>
         <button class="button primary block" id="new-session" type="button">+ Nova conversa</button>
         <nav class="session-list" id="session-list"></nav>
+
+        <footer class="sidebar-footer">
+          <button class="footer-button" id="open-memory" type="button">
+            <span class="footer-icon">🧠</span>
+            <span class="footer-label">Memória</span>
+            <span class="footer-count" id="memory-count"></span>
+          </button>
+          <button class="footer-button" id="open-settings" type="button">
+            <span class="footer-icon">⚙</span>
+            <span class="footer-label">Configurações</span>
+            <span class="footer-hint" id="settings-hint"></span>
+          </button>
+        </footer>
       </aside>
 
       <main class="chat">
         <header class="chat-header">
           <button class="icon-button only-mobile" id="open-sidebar" type="button" aria-label="Conversas">☰</button>
           <h1 class="chat-title" id="chat-title">Nova conversa</h1>
-          <div class="switches">
-            <label class="switch" title="Buscar fatos da memória de longo prazo">
-              <input type="checkbox" id="use-memory" checked /><span>Memória</span>
-            </label>
-            <label class="switch" title="Permitir que o agente chame tools">
-              <input type="checkbox" id="use-tools" checked /><span>Tools</span>
-            </label>
-          </div>
-          <button class="icon-button" id="toggle-panel" type="button" aria-label="Painel" title="Memória, tools e sistema">⚙</button>
         </header>
 
         <section class="messages" id="messages" aria-live="polite">
@@ -41,7 +45,7 @@
             <p>Tudo roda localmente. Experimente:</p>
             <div class="suggestions">
               <button type="button" class="suggestion">Lembra que eu moro em Recife.</button>
-              <button type="button" class="suggestion">Que dia é hoje e quantos dias faltam pro Natal?</button>
+              <button type="button" class="suggestion">Que dia será daqui a um ano?</button>
               <button type="button" class="suggestion">Onde eu moro?</button>
             </div>
           </div>
@@ -53,38 +57,88 @@
           <button class="button danger" id="stop" type="button" hidden>Parar</button>
         </form>
       </main>
-
-      <aside class="panel" id="panel" aria-label="Painel">
-        <nav class="tabs" role="tablist">
-          <button class="tab active" type="button" role="tab" data-tab="memory">Memória</button>
-          <button class="tab" type="button" role="tab" data-tab="tools">Tools</button>
-          <button class="tab" type="button" role="tab" data-tab="system">Sistema</button>
-          <button class="icon-button only-mobile" id="close-panel" type="button" aria-label="Fechar">✕</button>
-        </nav>
-
-        <section class="tab-panel" data-panel="memory">
-          <p class="muted" id="memory-stats">…</p>
-          <input class="field" id="memory-search" type="search" placeholder="Buscar por significado…" />
-          <label class="check"><input type="checkbox" id="show-archived" /> Mostrar arquivadas</label>
-          <form class="add-memory" id="add-memory">
-            <textarea class="field" id="memory-text" rows="2" placeholder="Novo fato (um por linha)"></textarea>
-            <button class="button" type="submit">Adicionar</button>
-          </form>
-          <ul class="memory-list" id="memory-list"></ul>
-        </section>
-
-        <section class="tab-panel" data-panel="tools" hidden>
-          <ul class="tool-list" id="tool-list"></ul>
-        </section>
-
-        <section class="tab-panel" data-panel="system" hidden>
-          <div id="system-info"></div>
-          <button class="button" id="refresh-health" type="button">Verificar novamente</button>
-          <p class="muted">Documentação interativa da API: <a href="/docs" target="_blank">/docs</a></p>
-        </section>
-      </aside>
       <div class="scrim" id="scrim"></div>
     </div>
+
+    <!-- Memory manager ------------------------------------------------------------ -->
+    <dialog class="dialog wide" id="memory-dialog" aria-labelledby="memory-title">
+      <header class="dialog-header">
+        <div>
+          <h2 id="memory-title">Memória</h2>
+          <p class="muted small" id="memory-stats">…</p>
+        </div>
+        <button class="icon-button" type="button" data-close aria-label="Fechar">✕</button>
+      </header>
+
+      <div class="memory-toolbar">
+        <input class="field" id="memory-search" type="search" placeholder="Buscar por significado…" />
+        <div class="segmented" role="radiogroup" aria-label="Estado">
+          <button type="button" data-status="active" class="active">Ativas</button>
+          <button type="button" data-status="archived">Arquivadas</button>
+          <button type="button" data-status="all">Todas</button>
+        </div>
+        <select class="field select" id="memory-source" aria-label="Origem">
+          <option value="">Toda origem</option>
+          <option value="agent">Agente</option>
+          <option value="manual">Manual</option>
+        </select>
+        <button class="button primary" id="toggle-add" type="button">+ Adicionar</button>
+      </div>
+
+      <form class="add-memory" id="add-memory" hidden>
+        <textarea class="field" id="memory-text" rows="3" placeholder="Um fato por linha, na primeira pessoa (ex.: Meu time é o Sport.)"></textarea>
+        <div class="row-actions">
+          <button class="button" type="button" id="cancel-add">Cancelar</button>
+          <button class="button primary" type="submit">Salvar</button>
+        </div>
+      </form>
+
+      <ul class="memory-list" id="memory-list"></ul>
+    </dialog>
+
+    <!-- Settings ----------------------------------------------------------------- -->
+    <dialog class="dialog" id="settings-dialog" aria-labelledby="settings-title">
+      <header class="dialog-header">
+        <h2 id="settings-title">Configurações</h2>
+        <button class="icon-button" type="button" data-close aria-label="Fechar">✕</button>
+      </header>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" type="button" role="tab" data-tab="general">Geral</button>
+        <button class="tab" type="button" role="tab" data-tab="tools">Tools</button>
+        <button class="tab" type="button" role="tab" data-tab="system">Sistema</button>
+      </nav>
+
+      <section class="tab-panel" data-panel="general">
+        <label class="setting">
+          <input type="checkbox" id="use-memory" checked />
+          <span>
+            <strong>Usar memória de longo prazo</strong>
+            <span class="muted small">Busca fatos salvos relevantes para cada mensagem.</span>
+          </span>
+        </label>
+        <label class="setting">
+          <input type="checkbox" id="use-tools" checked />
+          <span>
+            <strong>Permitir tools</strong>
+            <span class="muted small">O agente pode salvar memórias, consultar datas etc.</span>
+          </span>
+        </label>
+        <p class="muted small">Estas preferências valem para as próximas mensagens e ficam salvas neste navegador.</p>
+      </section>
+
+      <section class="tab-panel" data-panel="tools" hidden>
+        <ul class="tool-list" id="tool-list"></ul>
+      </section>
+
+      <section class="tab-panel" data-panel="system" hidden>
+        <div id="system-info"></div>
+        <div class="row-actions start">
+          <button class="button" id="refresh-health" type="button">Verificar novamente</button>
+          <a class="button" href="/docs" target="_blank">API /docs</a>
+        </div>
+      </section>
+    </dialog>
+
     <div class="toast" id="toast" role="status" hidden></div>
     <script type="module" src="/static/app.js"></script>
   </body>

@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from origin.memory import MemoryHit, MemoryRecord, MetadataValue, VectorMemory
 
@@ -16,6 +16,17 @@ class MemoryCreate(BaseModel):
 class MemoryCreated(BaseModel):
     # Near-duplicates of stored memories are not stored again; their existing id is returned.
     ids: list[str]
+
+
+class MemoryUpdate(BaseModel):
+    content: Annotated[str, Field(min_length=1)] | None = None
+    archived: bool | None = None
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> "MemoryUpdate":
+        if self.content is None and self.archived is None:
+            raise ValueError("send content and/or archived")
+        return self
 
 
 class MemoryStats(BaseModel):
@@ -60,6 +71,20 @@ async def search_memory(
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_memory(memory_id: str, memory: Memory) -> None:
     await memory.delete([memory_id])
+
+
+@router.patch("/{memory_id}", response_model=MemoryRecord)
+async def update_memory(memory_id: str, body: MemoryUpdate, memory: Memory) -> MemoryRecord:
+    """Edit a memory's text (it is re-embedded) and/or archive/unarchive it."""
+    if memory.get(memory_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Memory {memory_id!r} not found")
+    if body.content is not None:
+        await memory.update(memory_id, body.content.strip())
+    if body.archived is True:
+        memory.archive(memory_id)
+    elif body.archived is False:
+        memory.restore(memory_id)
+    return memory.get(memory_id)
 
 
 @router.post("/{memory_id}/restore", response_model=MemoryRecord)

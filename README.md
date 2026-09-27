@@ -71,9 +71,8 @@ A interface é servida pelo próprio Origin (`origin/web/static`): HTML, CSS e J
 |---|---|
 | **Conversas** (esquerda) | Cria, retoma e apaga sessões. O histórico fica no servidor e sobrevive a um reload. |
 | **Chat** | Streaming token a token via `/chat/events`. Cada tool call aparece num cartão expansível com argumentos e resultado. O rodapé de cada resposta mostra o tempo até o 1º token e o total. O botão **Parar** interrompe a geração. |
-| **Memória / Tools** (topo) | Liga ou desliga, por mensagem, a busca na memória e o uso de tools. |
-| **Painel ⚙ → Memória** | Lista e busca por significado (com score), adiciona fatos, apaga e restaura memórias arquivadas. |
-| **Painel ⚙ → Tools / Sistema** | Tools carregadas com suas descrições, estado do Ollama e dos modelos. |
+| **🧠 Memória** (canto inferior esquerdo, com o total de memórias ativas) | Gerenciador completo: busca por significado (com score), filtros por estado (ativas, arquivadas, todas) e por origem (agente, manual). Permite **editar o texto** (clique em "editar" ou dê duplo clique; Enter salva, Esc cancela, e o fato ganha novo embedding), arquivar, restaurar, apagar e adicionar vários fatos, um por linha. Memórias arquivadas mostram qual fato as substituiu. |
+| **⚙ Configurações** (canto inferior esquerdo) | **Geral:** liga ou desliga a memória e as tools (a preferência fica salva no navegador, e o rodapé avisa quando algo está desligado). **Tools:** tools carregadas e suas descrições. **Sistema:** estado do Ollama e dos modelos. |
 | **Indicador de status** | 🟢 online · 🟡 **carregando** (modelos fora da memória do Ollama; a próxima resposta pode levar ~15 s) · 🔴 degradado/offline. |
 
 Tema claro e escuro seguem o sistema, e o layout se adapta ao celular.
@@ -102,6 +101,7 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 | `/memory` | POST | Salva fatos `{texts, metadata?}` (quase-duplicatas não são salvas de novo) |
 | `/memory` | GET | Lista todas as memórias, as mais novas primeiro (`?limit=&offset=`) |
 | `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` (ignora arquivadas) |
+| `/memory/{id}` | PATCH | Edita o texto (com novo embedding) e/ou arquiva: `{content?, archived?}` |
 | `/memory/{id}` | DELETE | Remove uma memória |
 | `/memory/{id}/restore` | POST | Restaura uma memória arquivada |
 | `/memory/stats` | GET | Total, ativas e arquivadas |

@@ -42,6 +42,7 @@ export const api = {
     request("GET", `/memory/search?${new URLSearchParams({ q, k })}`),
   addMemory: (texts) => request("POST", "/memory", { texts, metadata: { source: "manual" } }),
   deleteMemory: (id) => request("DELETE", `/memory/${id}`),
+  updateMemory: (id, patch) => request("PATCH", `/memory/${id}`, patch),
   restoreMemory: (id) => request("POST", `/memory/${id}/restore`),
   memoryStats: () => request("GET", "/memory/stats"),
 
