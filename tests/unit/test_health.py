@@ -62,7 +62,7 @@ class FailingEngine(LLMEngine):
         (ollama.ResponseError("model 'x' not found", 404), 502, "ollama pull"),
     ],
 )
-@pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream", "/chat/events"])
 def test_backend_errors_become_http_errors(
     client: TestClient, path: str, exc: Exception, status: int, fragment: str
 ) -> None:

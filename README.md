@@ -79,7 +79,8 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 |----------|--------|-----------|
 | `/health` | GET | Status, versão e estado do Ollama/modelos (503 se degradado) |
 | `/chat` | POST | Resposta completa `{response, model, session_id, tool_calls}` |
-| `/chat/stream` | POST | Resposta em streaming (`text/plain`) |
+| `/chat/stream` | POST | Resposta em streaming (`text/plain`), só o texto |
+| `/chat/events` | POST | Streaming em SSE com eventos `tool_call`, `token`, `done` e `error` |
 | `/sessions` | POST / GET | Cria uma conversa / lista as conversas (mais recentes primeiro) |
 | `/sessions/{id}` | GET / DELETE | Conversa com todas as mensagens / apaga a conversa |
 | `/memory` | POST | Salva fatos `{texts, metadata?}` (quase-duplicatas não são salvas de novo) |
@@ -102,6 +103,31 @@ curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
 curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
   -d "{\"message\": \"O que eu levo de presente pra ela?\", \"session_id\": \"$SID\"}"
 ```
+
+### Streaming com eventos (SSE)
+
+O `/chat/stream` é prático no `curl`, mas entrega só texto. Uma interface que precise mostrar o que o agente está fazendo deve usar o `/chat/events`, que aceita o mesmo corpo:
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/chat/events -H "Content-Type: application/json" \
+  -d '{"message": "Lembra que eu moro em Recife e me diz quantos dias faltam pro Natal"}'
+```
+
+```text
+event: tool_call
+data: {"name": "remember", "args": {"fact": "Moro em Recife."}, "output": "Saved to long-term memory (id=...)."}
+
+event: tool_call
+data: {"name": "days_until", "args": {"target_date": "12-25"}, "output": "days: 90\n..."}
+
+event: token
+data: {"text": "Anotei"}
+
+event: done
+data: {"response": "Anotei que você mora em Recife. Faltam 90 dias para o Natal.", "model": "qwen3:8b", "session_id": null, "tool_calls": [...]}
+```
+
+Falhas antes do primeiro evento, como o Ollama fora do ar, viram erros HTTP (503/502) nos dois endpoints de streaming. Falhas depois que o stream começou chegam como `event: error`. Com `session_id`, a troca é gravada ao final, inclusive se o cliente desconectar no meio.
 
 ### Memória de longo prazo (RAG)
 

@@ -1,3 +1,5 @@
+import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Annotated, TypeVar
 
@@ -10,6 +12,7 @@ from origin.core import ChatTurn, LLMEngine, ToolCallRecord
 from origin.memory.storage import SessionStore
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -102,29 +105,77 @@ async def chat(
     )
 
 
+async def run_and_persist(
+    body: ChatRequest, engine: LLMEngine, sessions: SessionStore, history: list[ChatTurn]
+) -> AsyncIterator[str | ToolCallRecord]:
+    """Relay engine events and save the exchange to the session once the turn ends."""
+    parts: list[str] = []
+    tool_calls: list[ToolCallRecord] = []
+    try:
+        async for event in engine.events(body.message, history, body.use_memory, body.use_tools):
+            if isinstance(event, str):
+                parts.append(event)
+            else:
+                tool_calls.append(event)
+            yield event
+    finally:
+        # Also runs when the client disconnects mid-stream: keep what was produced.
+        if parts or tool_calls:
+            await save_exchange(sessions, body.session_id, body.message, "".join(parts), tool_calls)
+
+
 @router.post("/stream")
 async def chat_stream(
     body: ChatRequest, engine: Engine, sessions: Sessions, settings: AppSettings
 ) -> StreamingResponse:
+    """Plain-text token stream (easy to consume with curl)."""
     history = await resolve_history(body, sessions, settings.session_history_limit)
-    events = engine.events(body.message, history, body.use_memory, body.use_tools)
 
-    async def text_and_persist() -> AsyncIterator[str]:
+    async def text_only() -> AsyncIterator[str]:
+        async for event in run_and_persist(body, engine, sessions, history):
+            if isinstance(event, str):
+                yield event
+
+    return StreamingResponse(await prefetch(text_only()), media_type="text/plain; charset=utf-8")
+
+
+def sse(event: str, data: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/events")
+async def chat_events(
+    body: ChatRequest, engine: Engine, sessions: Sessions, settings: AppSettings
+) -> StreamingResponse:
+    """Server-Sent Events: `tool_call`, `token`, then `done` (or `error` mid-stream)."""
+    history = await resolve_history(body, sessions, settings.session_history_limit)
+    events = await prefetch(run_and_persist(body, engine, sessions, history))
+
+    async def encode() -> AsyncIterator[str]:
         parts: list[str] = []
         tool_calls: list[ToolCallRecord] = []
         try:
             async for event in events:
                 if isinstance(event, str):
                     parts.append(event)
-                    yield event
+                    yield sse("token", {"text": event})
                 else:
                     tool_calls.append(event)
-        finally:
-            # Also runs when the client disconnects mid-stream: keep what was produced.
-            if parts or tool_calls:
-                await save_exchange(
-                    sessions, body.session_id, body.message, "".join(parts), tool_calls
-                )
+                    yield sse("tool_call", event.model_dump())
+        except Exception as exc:  # headers are already sent: report in-band
+            logger.exception("Chat stream failed")
+            yield sse("error", {"detail": f"{type(exc).__name__}: {exc}"})
+            return
+        done = ChatResponse(
+            response="".join(parts),
+            model=engine.model_name,
+            session_id=body.session_id,
+            tool_calls=tool_calls,
+        )
+        yield sse("done", done.model_dump())
 
-    stream = await prefetch(text_and_persist())
-    return StreamingResponse(stream, media_type="text/plain; charset=utf-8")
+    return StreamingResponse(
+        encode(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
