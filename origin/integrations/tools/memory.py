@@ -1,22 +1,16 @@
-import asyncio
-import logging
 import re
 from typing import TYPE_CHECKING
 
 from langchain_core.tools import BaseTool, tool
 
-from origin.prompts import load_prompt
+from origin.memory.curator import CurationResult, MemoryCurator
 
 if TYPE_CHECKING:
     from origin.integrations.registry import ToolContext
 
-logger = logging.getLogger(__name__)
-
 MEMORY_ID = re.compile(r"^[0-9a-f]{32}$")
 # A description must match a stored memory at least this well to be forgotten.
 FORGET_MIN_SCORE = 0.6
-# Most similar stored memories checked for being superseded by a new fact.
-CONFLICT_CANDIDATES = 3
 EXPLICIT_SAVE_INTENT = (
     r"\b(lembr(e|a|ar)\s+(de\s+)?que|anot|guard|salv|registr|n[ãa]o\s+esque[cç]|"
     r"remember\s+that|note\s+that|save)"
@@ -27,7 +21,7 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
     if ctx.memory is None:
         return []
     store = ctx.memory
-    conflict_threshold = ctx.settings.memory_conflict_threshold
+    curator = MemoryCurator(store, ctx.llm, ctx.settings.memory_conflict_threshold)
 
     @tool
     async def remember(fact: str) -> str:
@@ -47,23 +41,18 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         "Mudei de time, agora torço pro Náutico."; "Moro em São Paulo." — not "Me mudei...".
         Call it once per distinct fact.
         """
-        if duplicate := await store.find_duplicate(fact):
+        # The agent already writes a clean fact, so no normalization pass here (latency);
+        # dedup and superseding are shared with manual adds and edits via the curator.
+        result = CurationResult()
+        await curator.save_fact(fact, {"source": "agent"}, result)
+        if result.duplicates:
+            (duplicate,) = result.duplicates
             return f'Already in memory (id={duplicate.id}): "{duplicate.content}".'
 
-        similar = await store.search(fact, k=CONFLICT_CANDIDATES, min_score=conflict_threshold)
-        (memory_id,) = await store.add([fact], {"source": "agent"}, dedup=False)
-        output = f"Saved to long-term memory (id={memory_id})."
-
-        # Similarity alone cannot tell "Sport -> Náutico" (replace) from "pizza de calabresa /
-        # pizza de mussarela" (both true), so a focused yes/no call decides, one per candidate,
-        # in parallel. Superseded facts are archived, not deleted, so a wrong call is
-        # recoverable.
-        verdicts = await asyncio.gather(*(_supersedes(hit.content, fact) for hit in similar))
-        replaced = [hit for hit, supersedes in zip(similar, verdicts, strict=True) if supersedes]
-        for hit in replaced:
-            store.archive(hit.id, superseded_by=memory_id)
-        if replaced:
-            listing = "\n".join(f'- "{hit.content}"' for hit in replaced)
+        (saved,) = result.saved
+        output = f"Saved to long-term memory (id={saved.id})."
+        if result.archived:
+            listing = "\n".join(f'- "{record.content}"' for record in result.archived)
             output += f"\nIt replaces these outdated memories, which were archived:\n{listing}"
         # The fact is stored in the user's first person; without this, small models often
         # confirmed by repeating it verbatim ("Entendi. Moro em Recife.").
@@ -72,18 +61,6 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
             "(the fact above is in the user's own words)."
         )
         return output
-
-    async def _supersedes(old: str, new: str) -> bool:
-        if ctx.llm is None:
-            return False
-        prompt = load_prompt("memory_conflict").format(old=old, new=new)
-        try:
-            answer = (await ctx.llm.ainvoke(prompt)).text.strip().upper()
-        except Exception:
-            logger.warning("Memory conflict check failed; keeping %r", old, exc_info=True)
-            return False
-        # The prompt asks whether both can be true at once: "NO" means the new fact replaces.
-        return answer.startswith("NO")
 
     # Pure questions ("Onde eu moro?", "O que levo de presente pra ela?") never save, unless
     # they carry an explicit save request ("Você pode anotar que...?", "Lembra que ...?").

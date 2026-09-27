@@ -98,17 +98,18 @@ def test_memory_api_patch(client: TestClient, memory: VectorMemory) -> None:
 
     edited = client.patch(f"/memory/{memory_id}", json={"content": "  Moro em Olinda.  "})
     assert edited.status_code == 200
-    assert edited.json()["content"] == "Moro em Olinda."
+    assert edited.json()["memory"]["content"] == "Moro em Olinda."
+    assert edited.json()["normalized"] is False
 
     archived = client.patch(f"/memory/{memory_id}", json={"archived": True}).json()
-    assert archived["metadata"]["archived"] is True
+    assert archived["memory"]["metadata"]["archived"] is True
     assert client.get("/memory/stats").json()["archived"] == 1
 
     both = client.patch(
         f"/memory/{memory_id}", json={"content": "Moro em Recife.", "archived": False}
     )
-    assert both.json()["content"] == "Moro em Recife."
-    assert both.json()["metadata"]["archived"] is False
+    assert both.json()["memory"]["content"] == "Moro em Recife."
+    assert both.json()["memory"]["metadata"]["archived"] is False
 
     assert client.patch("/memory/nope", json={"content": "x"}).status_code == 404
     assert client.patch(f"/memory/{memory_id}", json={}).status_code == 422

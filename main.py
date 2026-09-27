@@ -22,6 +22,7 @@ from origin.core import LLMEngine, make_chat_model
 from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
+from origin.memory.curator import MemoryCurator
 from origin.memory.storage import SessionStore
 from origin.web import mount_web
 
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory = VectorMemory.from_settings(settings)
     app.state.sessions = SessionStore(settings.sqlite_path)
     judge = make_chat_model(settings, temperature=0)
+    app.state.curator = MemoryCurator(app.state.memory, judge, settings.memory_conflict_threshold)
     registry = (
         ToolRegistry.discover(
             ToolContext(settings, app.state.memory, llm=judge),

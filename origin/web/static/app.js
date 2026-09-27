@@ -37,8 +37,22 @@ const el = {
 const state = {
   sessionId: null,
   streaming: null, // AbortController of the in-flight turn
-  memory: { status: "active", editing: null },
+  memory: { status: "active", editing: null, highlight: new Set() },
 };
+
+// "Otimizar com IA" preference, shared by the add form and the inline editor.
+const OPTIMIZE_KEY = "origin:optimize-memory";
+function optimizeEnabled() {
+  try {
+    return localStorage.getItem(OPTIMIZE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+function setOptimize(value) {
+  try { localStorage.setItem(OPTIMIZE_KEY, value); } catch {}
+  document.querySelectorAll(".optimize-toggle").forEach((box) => (box.checked = value));
+}
 
 // Tools that change stored memories; after they run, memory views are refreshed.
 const MEMORY_TOOLS = new Set(["remember", "forget"]);
@@ -387,7 +401,7 @@ function memoryRow(memory) {
   const supersededBy = meta.superseded_by && records.get(meta.superseded_by);
 
   const chips = [
-    h("span", { class: "badge" }, SOURCE_LABELS[meta.source] || meta.source || "—"),
+    meta.source ? h("span", { class: "badge" }, SOURCE_LABELS[meta.source] || meta.source) : null,
     meta.created_at ? h("span", { class: "muted small", title: new Date(meta.created_at).toLocaleString("pt-BR") }, formatDate(meta.created_at)) : null,
     meta.edited_at ? h("span", { class: "badge", title: `Editada em ${new Date(meta.edited_at).toLocaleString("pt-BR")}` }, "editada") : null,
     memory.score != null ? h("span", { class: "badge", title: "Similaridade com a busca" }, `score ${memory.score.toFixed(2)}`) : null,
@@ -409,7 +423,8 @@ function memoryRow(memory) {
           "apagar"),
       );
 
-  return h("li", { class: `memory-row${meta.archived ? " archived" : ""}${editing ? " editing" : ""}`, "data-id": memory.id },
+  const flash = state.memory.highlight.has(memory.id) ? " flash" : "";
+  return h("li", { class: `memory-row${meta.archived ? " archived" : ""}${editing ? " editing" : ""}${flash}`, "data-id": memory.id },
     h("div", { class: "memory-main" }, body, h("div", { class: "memory-meta" }, chips)),
     actions,
   );
@@ -418,27 +433,77 @@ function memoryRow(memory) {
 function memoryEditor(memory) {
   const textarea = h("textarea", { class: "field", rows: 2 });
   textarea.value = memory.content;
+  const optimize = h("input", { type: "checkbox", class: "optimize-toggle" });
+  optimize.checked = optimizeEnabled();
+  optimize.addEventListener("change", () => setOptimize(optimize.checked));
+  const saveButton = h("button", { class: "button primary", type: "button" }, "Salvar");
+  const cancelButton = h("button", { class: "button", type: "button" }, "Cancelar");
+
+  let busy = false;
   const save = async () => {
     const content = textarea.value.trim();
+    if (busy) return;
     if (!content) return toast("O texto da memória não pode ficar vazio.");
-    state.memory.editing = null;
-    if (content === memory.content) return refreshMemory();
-    await mutateMemory(() => api.updateMemory(memory.id, { content }), "Memória atualizada.");
+    if (content === memory.content && !optimize.checked) return cancel();
+    busy = true;
+    textarea.disabled = saveButton.disabled = cancelButton.disabled = true;
+    saveButton.textContent = optimize.checked ? "Otimizando…" : "Salvando…";
+    try {
+      const result = await api.updateMemory(memory.id, { content, optimize: optimize.checked });
+      state.memory.editing = null;
+      showCuration(result, "Memória atualizada.");
+    } catch (error) {
+      toast(describeError(error));
+      busy = false;
+      textarea.disabled = saveButton.disabled = cancelButton.disabled = false;
+      saveButton.textContent = "Salvar";
+      return;
+    }
+    await refreshMemory();
   };
   const cancel = () => { state.memory.editing = null; refreshMemory(); };
+  saveButton.addEventListener("click", save);
+  cancelButton.addEventListener("click", cancel);
   textarea.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); save(); }
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!busy) cancel(); }
   });
   queueMicrotask(() => { textarea.focus(); textarea.setSelectionRange(textarea.value.length, textarea.value.length); });
   return h("div", { class: "memory-editor" },
     textarea,
     h("div", { class: "row-actions" },
       h("span", { class: "muted small" }, "Enter salva · Esc cancela"),
-      h("button", { class: "button", type: "button", onclick: cancel }, "Cancelar"),
-      h("button", { class: "button primary", type: "button", onclick: save }, "Salvar"),
+      h("label", { class: "check optimize", title: "O modelo reescreve em fatos curtos e separados, sem perder detalhes; evita duplicatas e arquiva o que ficou desatualizado" },
+        optimize, " ✨ Otimizar com IA"),
+      cancelButton,
+      saveButton,
     ),
   );
+}
+
+/** Tell the user what curation did, and flash the memories it touched. */
+function showCuration(result, fallback) {
+  const saved = result.saved || [];
+  const duplicates = result.duplicates || [];
+  const editedId = result.memory?.id;
+  const superseded = (result.archived || []).filter((a) => a.id !== editedId || !duplicates.length);
+  const parts = [];
+  if (result.normalized && saved.length > 1) parts.push(`dividida em ${saved.length} memórias`);
+  else if (result.normalized && saved.length === 1) parts.push(`otimizada: "${saved[0].content}"`);
+  if (duplicates.length === 1) parts.push(`já existia ("${duplicates[0].content}"), mesclada`);
+  else if (duplicates.length > 1) parts.push(`${duplicates.length} já existiam, mescladas`);
+  if (superseded.length) {
+    parts.push(`substituiu ${superseded.length} memória${superseded.length > 1 ? "s" : ""} desatualizada${superseded.length > 1 ? "s" : ""}`);
+  }
+  const message = parts.length ? parts.join(" · ") : fallback;
+  toast(message.charAt(0).toUpperCase() + message.slice(1), "info");
+
+  state.memory.highlight = new Set([...saved, ...duplicates].map((r) => r.id));
+  clearTimeout(showCuration.timer);
+  showCuration.timer = setTimeout(() => {
+    state.memory.highlight.clear();
+    document.querySelectorAll(".memory-row.flash").forEach((row) => row.classList.remove("flash"));
+  }, 2500);
 }
 
 function startEdit(id) {
@@ -576,12 +641,31 @@ $("#cancel-add").addEventListener("click", () => {
 });
 el.addMemory.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const texts = el.memoryText.value.split("\n").map((t) => t.trim()).filter(Boolean);
+  const optimize = optimizeEnabled();
+  // With optimization the model splits facts itself, so free text is sent as one note;
+  // without it, each line is stored as its own memory.
+  const texts = optimize
+    ? [el.memoryText.value.trim()].filter(Boolean)
+    : el.memoryText.value.split("\n").map((t) => t.trim()).filter(Boolean);
   if (!texts.length) return;
-  await mutateMemory(() => api.addMemory(texts), texts.length > 1 ? `${texts.length} memórias salvas.` : "Memória salva.");
-  el.memoryText.value = "";
-  el.addMemory.hidden = true;
+  const submit = el.addMemory.querySelector("[type=submit]");
+  submit.disabled = true;
+  submit.textContent = optimize ? "Otimizando…" : "Salvando…";
+  try {
+    const result = await api.addMemory(texts, optimize);
+    showCuration(result, texts.length > 1 ? `${texts.length} memórias salvas.` : "Memória salva.");
+    el.memoryText.value = "";
+    el.addMemory.hidden = true;
+  } catch (error) {
+    toast(describeError(error));
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Salvar";
+  }
+  await refreshMemory();
 });
+el.addMemory.querySelector(".optimize-toggle").addEventListener("change", (event) => setOptimize(event.target.checked));
+setOptimize(optimizeEnabled());
 
 // Persist the preferences across reloads (a per-browser convenience only).
 for (const input of [el.useMemory, el.useTools]) {

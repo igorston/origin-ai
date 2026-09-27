@@ -380,7 +380,7 @@ a { color: var(--accent); }
 
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .row-actions.start { justify-content: flex-start; }
-.row-actions .muted { margin-right: auto; }
+.row-actions:not(.start) > :first-child { margin-right: auto; }
 
 /* ------------------------------------------------------------ memory manager */
 
@@ -423,6 +423,10 @@ a { color: var(--accent); }
 }
 .memory-row:hover { background: var(--surface-2); }
 .memory-row.editing { background: var(--accent-soft); }
+.memory-row.flash { animation: flash 2.5s ease-out; border-color: var(--accent); }
+@keyframes flash { 0%, 30% { background: var(--accent-soft); } 100% { background: transparent; } }
+.check.optimize { white-space: nowrap; cursor: pointer; }
+.check.optimize input { accent-color: var(--accent); }
 .memory-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .memory-content { margin: 0; overflow-wrap: anywhere; cursor: text; }
 .memory-row.archived .memory-content { color: var(--muted); text-decoration: line-through; }

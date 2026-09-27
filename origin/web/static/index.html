@@ -86,8 +86,11 @@
       </div>
 
       <form class="add-memory" id="add-memory" hidden>
-        <textarea class="field" id="memory-text" rows="3" placeholder="Um fato por linha, na primeira pessoa (ex.: Meu time é o Sport.)"></textarea>
+        <textarea class="field" id="memory-text" rows="3" placeholder="Escreva livremente (ex.: moro em recife e meu cachorro se chama thor)"></textarea>
         <div class="row-actions">
+          <label class="check optimize" title="O modelo reescreve em fatos curtos e separados, sem perder detalhes; evita duplicatas e arquiva o que ficou desatualizado">
+            <input type="checkbox" class="optimize-toggle" checked /> ✨ Otimizar com IA
+          </label>
           <button class="button" type="button" id="cancel-add">Cancelar</button>
           <button class="button primary" type="submit">Salvar</button>
         </div>

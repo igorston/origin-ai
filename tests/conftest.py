@@ -19,9 +19,10 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel  #
 
 from main import app  # noqa: E402
 from origin.api.routes.chat import get_engine, get_sessions  # noqa: E402
-from origin.api.routes.memory import get_memory  # noqa: E402
+from origin.api.routes.memory import get_curator, get_memory  # noqa: E402
 from origin.core import LLMEngine  # noqa: E402
 from origin.memory import VectorMemory  # noqa: E402
+from origin.memory.curator import MemoryCurator  # noqa: E402
 from origin.memory.storage import SessionStore  # noqa: E402
 
 
@@ -43,12 +44,20 @@ def sessions(tmp_path: Path) -> SessionStore:
 
 
 @pytest.fixture
+def curator(memory: VectorMemory) -> MemoryCurator:
+    """No model by default: optimize=True stores texts as written. Tests that exercise
+    normalization build a curator with a scripted model."""
+    return MemoryCurator(memory, llm=None)
+
+
+@pytest.fixture
 def client(
-    fake_engine: LLMEngine, memory: VectorMemory, sessions: SessionStore
+    fake_engine: LLMEngine, memory: VectorMemory, sessions: SessionStore, curator: MemoryCurator
 ) -> Iterator[TestClient]:
     app.dependency_overrides[get_engine] = lambda: fake_engine
     app.dependency_overrides[get_memory] = lambda: memory
     app.dependency_overrides[get_sessions] = lambda: sessions
+    app.dependency_overrides[get_curator] = lambda: curator
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

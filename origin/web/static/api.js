@@ -40,7 +40,8 @@ export const api = {
   memories: (limit = 500) => request("GET", `/memory?limit=${limit}`),
   searchMemory: (q, k = 10) =>
     request("GET", `/memory/search?${new URLSearchParams({ q, k })}`),
-  addMemory: (texts) => request("POST", "/memory", { texts, metadata: { source: "manual" } }),
+  addMemory: (texts, optimize = false) =>
+    request("POST", "/memory", { texts, metadata: { source: "manual" }, optimize }),
   deleteMemory: (id) => request("DELETE", `/memory/${id}`),
   updateMemory: (id, patch) => request("PATCH", `/memory/${id}`, patch),
   restoreMemory: (id) => request("POST", `/memory/${id}/restore`),

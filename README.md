@@ -71,7 +71,7 @@ A interface é servida pelo próprio Origin (`origin/web/static`): HTML, CSS e J
 |---|---|
 | **Conversas** (esquerda) | Cria, retoma e apaga sessões. O histórico fica no servidor e sobrevive a um reload. |
 | **Chat** | Streaming token a token via `/chat/events`. Cada tool call aparece num cartão expansível com argumentos e resultado. O rodapé de cada resposta mostra o tempo até o 1º token e o total. O botão **Parar** interrompe a geração. |
-| **🧠 Memória** (canto inferior esquerdo, com o total de memórias ativas) | Gerenciador completo: busca por significado (com score), filtros por estado (ativas, arquivadas, todas) e por origem (agente, manual). Permite **editar o texto** (clique em "editar" ou dê duplo clique; Enter salva, Esc cancela, e o fato ganha novo embedding), arquivar, restaurar, apagar e adicionar vários fatos, um por linha. Memórias arquivadas mostram qual fato as substituiu. |
+| **🧠 Memória** (canto inferior esquerdo, com o total de memórias ativas) | Gerenciador completo: busca por significado (com score), filtros por estado (ativas, arquivadas, todas) e por origem (agente, manual). Permite **editar o texto** (clique em "editar" ou dê duplo clique; Enter salva, Esc cancela, e o fato ganha novo embedding), arquivar, restaurar, apagar e adicionar. Com **✨ Otimizar com IA** (ligado por padrão), o que você escreve passa pela curadoria descrita abaixo antes de ser gravado, e um aviso mostra o que aconteceu ("Dividida em 2 memórias", "Já existia, mesclada"). Desligue para gravar exatamente o que escreveu. Memórias arquivadas mostram qual fato as substituiu. |
 | **⚙ Configurações** (canto inferior esquerdo) | **Geral:** liga ou desliga a memória e as tools (a preferência fica salva no navegador, e o rodapé avisa quando algo está desligado). **Tools:** tools carregadas e suas descrições. **Sistema:** estado do Ollama e dos modelos. |
 | **Indicador de status** | 🟢 online · 🟡 **carregando** (modelos fora da memória do Ollama; a próxima resposta pode levar ~15 s) · 🔴 degradado/offline. |
 
@@ -101,7 +101,7 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 | `/memory` | POST | Salva fatos `{texts, metadata?}` (quase-duplicatas não são salvas de novo) |
 | `/memory` | GET | Lista todas as memórias, as mais novas primeiro (`?limit=&offset=`) |
 | `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` (ignora arquivadas) |
-| `/memory/{id}` | PATCH | Edita o texto (com novo embedding) e/ou arquiva: `{content?, archived?}` |
+| `/memory/{id}` | PATCH | Edita o texto (com novo embedding) e/ou arquiva: `{content?, archived?, optimize?}` |
 | `/memory/{id}` | DELETE | Remove uma memória |
 | `/memory/{id}/restore` | POST | Restaura uma memória arquivada |
 | `/memory/stats` | GET | Total, ativas e arquivadas |
@@ -174,6 +174,22 @@ curl -X POST http://127.0.0.1:8000/chat \
 O limiar é baixo de propósito. Contradições escritas de formas diferentes pontuam pouco ("Eu moro em Recife." / "Moro em São Paulo." = 0,58), na mesma faixa de fatos só relacionados. Por isso a similaridade só pré-seleciona candidatos, e quem decide é a pergunta.
 
 Fatos substituídos são **arquivados**, não apagados: saem da busca, mas continuam em `GET /memory` e podem ser restaurados com `POST /memory/{id}/restore`. A pergunta foi escrita para errar para o lado seguro. Em 60 julgamentos, ela teve zero falsos positivos (nunca substituiu um fato ainda verdadeiro) e deixou passar 12 substituições reais, concentradas em 4 pares escritos de formas muito diferentes.
+
+**Curadoria de memórias editadas ou adicionadas à mão** (`optimize: true` em `POST /memory` e `PATCH /memory/{id}`, e o "Otimizar com IA" da interface). O modelo reescreve o texto livre em fatos curtos, independentes, na primeira pessoa e no estado atual; depois vêm a mesma proteção contra duplicatas e a mesma substituição usadas pela tool `remember`:
+
+| Você escreve | É gravado |
+|---|---|
+| `meu cachorro thor e minha gata luna` | "Meu cachorro é o Thor." · "Minha gata é a Luna." |
+| `Mudei de emprego, agora trabalho na Globant como dev sênior` | "Trabalho na Globant como dev sênior." |
+| `reunião com o time amanhã 14h` | "Tenho uma reunião com o time em 28/09/2026 às 14h." |
+| `i work at google as a data scientist and my wife is called emma` | "I work at Google as a data scientist." · "My wife is called Emma." |
+
+Reescrever dados do usuário exige proteções, porque o modelo, sozinho, perdia detalhes ("como dev sênior"), traduzia notas em inglês e chegou a inventar fatos ("Tenho duas irmãs, Julia e Ana"). Por isso:
+- O código confere se **toda palavra relevante da nota continua no resultado** e se **nada foi acrescentado** (no máximo um conectivo, como "se chama").
+- Se a verificação falhar, há uma nova tentativa informando o problema; se falhar de novo, **o texto original é gravado**. Nenhum dado se perde por uma reescrita ruim, inclusive quando o Ollama cai no meio.
+- Datas relativas ("amanhã", "ontem", "today") viram datas absolutas **no código**, antes de o modelo ver a nota, porque ele ignorou um calendário fornecido.
+
+`python scripts/eval_curation.py` mede fidelidade, divisão e idioma (resultado atual: 30/30, mediana de 0,4 s por nota).
 
 **Perguntas não salvam.** A tool `remember` declara `not_for_questions` nos metadados. Se a mensagem é só uma pergunta ("Onde eu moro?", "O que eu levo de presente pra ela?") e não tem um pedido explícito de salvar ("Você pode anotar que...?"), o agente descarta a chamada. Regras no prompt não bastavam: o modelo às vezes salvava "A capital da França é Paris." ou um plano tirado do histórico. Qualquer tool pode usar o mesmo mecanismo. Para esquecer algo de propósito ("esquece aquilo da alergia"), existe a tool `forget`, que apaga de verdade.
 
