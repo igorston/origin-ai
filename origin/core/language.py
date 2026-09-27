@@ -5,9 +5,20 @@ import re
 # Written in the target language itself: an English "reply in Portuguese" still primed
 # English words ("Okay, note salva!").
 REPLY_INSTRUCTIONS = {
-    "pt": "[Responda ao usuário em português do Brasil, em uma ou duas frases diretas.]",
-    "en": "[Reply to the user in English, in one or two direct sentences.]",
-    "es": "[Responde al usuario en español, en una o dos frases directas.]",
+    # No example sentences: the model copied the example's facts into real replies.
+    "pt": (
+        "[Responda ao usuário em português do Brasil, em uma ou duas frases diretas, "
+        'falando com ele por "você" — nunca como se você fosse o usuário. '
+        "Não misture palavras em inglês.]"
+    ),
+    "en": (
+        "[Reply to the user in English, in one or two direct sentences, addressing them "
+        'as "you" — never as if you were the user.]'
+    ),
+    "es": (
+        "[Responde al usuario en español, en una o dos frases directas, hablándole de "
+        '"tú", nunca como si fueras el usuario. No mezcles palabras en inglés.]'
+    ),
 }
 FALLBACK_INSTRUCTION = "[Reply in the same language the user wrote in.]"
 

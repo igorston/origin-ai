@@ -43,9 +43,7 @@ async def test_tool_loop_executes_call_and_returns_final_answer() -> None:
     second_call = engine.model.received[1]
     assert isinstance(second_call[-1], ToolMessage)
     # The model sees the output plus a language reminder; the record keeps the raw output.
-    assert second_call[-1].content == (
-        "echo: hi\n\n[Reply to the user in English, in one or two direct sentences.]"
-    )
+    assert second_call[-1].content.startswith("echo: hi\n\n[Reply to the user in English")
     assert engine.model.bound_tools == ["echo", "explode"]
     assert "## Tools" in second_call[0].content
 
@@ -87,8 +85,11 @@ async def test_routing_turn_runs_tools_before_answering() -> None:
     result = await engine.generate("q", use_memory=False)
 
     routing_call, answer_call = engine.model.received
-    assert "## Routing step" in routing_call[0].content
-    assert "## Routing step" not in answer_call[0].content
+    # The routing instruction rides on the latest user message, so the system prompt (and
+    # its KV cache) is identical across the routing and answer calls.
+    assert routing_call[-1].content.startswith("q\n\n[Routing step")
+    assert routing_call[0].content == answer_call[0].content
+    assert answer_call[1].content == "q"
     assert isinstance(answer_call[-1], ToolMessage)
     assert result.text == "answer"
     assert [c.name for c in result.tool_calls] == ["echo"]

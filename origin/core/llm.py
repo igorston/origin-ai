@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -30,6 +31,16 @@ logger = logging.getLogger(__name__)
 
 # How much of the previous exchange is prepended to the memory query for follow-ups.
 RECALL_CONTEXT_CHARS = 500
+
+
+CLAUSE_BOUNDARY = re.compile(r"[?!.;,]+|\s+(?:e|and|y|mas|but)\s+", re.IGNORECASE)
+
+
+def split_clauses(message: str) -> list[str]:
+    """Clauses of a compound message ("X e Y?" -> ["X", "Y"]); [] for a single clause."""
+    clauses = [part.strip() for part in CLAUSE_BOUNDARY.split(message)]
+    clauses = [part for part in clauses if len(part.split()) >= 2]
+    return clauses if len(clauses) > 1 else []
 
 
 class TurnTimings:
@@ -154,9 +165,11 @@ class LLMEngine:
     async def _recall(self, message: str, history: Sequence[ChatTurn] = ()) -> str | None:
         if self.memory is None:
             return None
-        # Follow-ups like "and her birthday?" carry no entity on their own, so also search with
-        # the last exchange prepended, and keep each memory's best score across both queries.
-        queries = [message]
+        # Compound messages dilute the embedding ("Onde eu moro e quantos dias faltam pro
+        # Natal?" scored 0.44 against "Moro em São Paulo." vs 0.56 alone), so each clause is
+        # searched too. Follow-ups like "and her birthday?" carry no entity on their own, so
+        # the last exchange is prepended as well. Each memory keeps its best score.
+        queries = [message, *split_clauses(message)]
         if history and self.contextual_recall:
             recent = "\n".join(turn.content for turn in history[-2:])
             queries.append(f"{recent[-RECALL_CONTEXT_CHARS:]}\n{message}")
@@ -187,17 +200,19 @@ class LLMEngine:
         use_memory: bool = True,
         with_tools: bool = False,
     ) -> list[BaseMessage]:
+        # The system prompt (and the tool schemas the chat template appends to it) stays
+        # identical across calls and turns, so Ollama reuses its KV cache for that prefix.
+        # Everything that varies — recalled memories, routing instructions — goes at the end.
         sections = [self.system_prompt]
         if with_tools:
             sections.append(load_prompt("tools"))
-        if use_memory and (context := await self._recall(message, history)):
-            sections.append(context)
-
         messages: list[BaseMessage] = [SystemMessage("\n\n".join(sections))]
         for turn in history:
             cls = HumanMessage if turn.role == "user" else AIMessage
             messages.append(cls(turn.content))
-        messages.append(HumanMessage(message))
+
+        context = await self._recall(message, history) if use_memory else None
+        messages.append(HumanMessage(f"{context}\n\n{message}" if context else message))
         return messages
 
     async def events(
@@ -227,10 +242,11 @@ class LLMEngine:
                 # Small models stop calling tools once they start writing text, so for compound
                 # messages they answer the easy part and drop the rest. A dedicated routing
                 # turn, where answering is not allowed, makes them commit to every tool first.
-                system = f"{messages[0].content}\n\n{load_prompt('tool_routing')}"
+                latest = messages[-1]
+                routing = HumanMessage(f"{latest.content}\n\n{load_prompt('tool_routing')}")
                 router = self.router.bind_tools(list(tools.values()))
                 with timings.phase("routing"):
-                    decision = await router.ainvoke([SystemMessage(system), *messages[1:]])
+                    decision = await router.ainvoke([*messages[:-1], routing])
                 if decision.tool_calls:
                     messages.append(AIMessage("", tool_calls=decision.tool_calls))
                     for record in await run_tools(decision.tool_calls):

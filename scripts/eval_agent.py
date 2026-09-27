@@ -89,6 +89,20 @@ def portuguese() -> Check:
     return lambda r, _: bool(r.text.strip()) and not EN_MARKERS.search(r.text)
 
 
+# Speaking as the user: first-person verbs, or "meu/minha" + a fact about the user.
+# ("minha memória", "meu banco de dados" and "seu gosto" are the assistant talking; fine.)
+FIRST_PERSON = re.compile(
+    r"\b(moro|torço|gosto de|tenho (?:dentista|consulta|alergia)|"
+    r"(?:meu|minha) (?:time|esposa|filh[oa]|cachorro|aniversário|mãe|pai|cidade))\b",
+    re.IGNORECASE,
+)
+
+
+def addresses_user() -> Check:
+    """A confirmation talks to the user ("você mora..."), not as the user ("moro...")."""
+    return lambda r, _: not FIRST_PERSON.search(r.text)
+
+
 def forgotten(needle: str) -> Check:
     """No memory at all (seeded or saved) still contains the needle."""
     return lambda _, memories: not any(needle in text for _, text in memories)
@@ -150,12 +164,23 @@ CASES = [
     Case(
         "single",
         "Lembre que meu time favorito é o Sport.",
-        [remembered("Sport"), portuguese()],
+        [remembered("Sport"), portuguese(), addresses_user()],
     ),
     Case(
         "single",
         "Anota aí: tenho dentista na quinta às 15h.",
-        [remembered("dentista"), portuguese()],
+        [remembered("dentista"), portuguese(), addresses_user()],
+    ),
+    # Colloquial "Lembra que X" is an imperative ("remember that X"), not "do you remember?"
+    Case(
+        "single",
+        "Lembra que eu moro em Recife.",
+        [remembered("Recife"), portuguese(), addresses_user()],
+    ),
+    Case(
+        "single",
+        "Lembra que meu cachorro se chama Thor.",
+        [remembered("Thor"), portuguese(), addresses_user()],
     ),
     Case("single", "Que dia é hoje?", [says(WEEKDAY_PT)]),
     Case("single", "Quantos dias faltam para o Natal?", [number(DAYS_TO_XMAS)]),
@@ -180,7 +205,7 @@ CASES = [
     Case(
         "compound",
         "Lembre que meu time é o Sport e me diga quantos dias faltam para o Ano Novo.",
-        [remembered("Sport"), number(DAYS_TO_NEW_YEAR)],
+        [remembered("Sport"), number(DAYS_TO_NEW_YEAR), portuguese(), addresses_user()],
     ),
     Case(
         "compound",
@@ -190,12 +215,12 @@ CASES = [
     Case(
         "compound",
         "Guarde que minha esposa se chama Ana e que meu filho se chama Pedro.",
-        [remembered("Ana", "Pedro")],
+        [remembered("Ana", "Pedro"), portuguese(), addresses_user()],
     ),
     Case(
         "compound",
         "Me explica o que é Docker em uma frase e lembra que tenho dentista na quinta.",
-        [remembered("dentista"), matches(r"cont[aêe]i?ner")],
+        [remembered("dentista"), matches(r"cont[aêe]i?ner"), portuguese(), addresses_user()],
     ),
     Case(
         "compound",
@@ -239,6 +264,31 @@ CASES = [
             ("assistant", "Guardei: seu aniversário é 10 de março."),
         ],
     ),
+    # questions about stored facts are answered from memory, never re-saved
+    Case(
+        "question",
+        "Onde eu moro?",
+        [no_tools(), says("São Paulo")],
+        seed=["Moro em São Paulo.", "Trabalho como engenheiro de software."],
+    ),
+    Case(
+        "question",
+        "Qual é o meu time do coração mesmo?",
+        [no_tools(), says("Sport")],
+        seed=["Meu time favorito é o Sport.", "Moro em Recife."],
+    ),
+    Case(
+        "question",
+        "Onde eu moro e quantos dias faltam pro Natal?",
+        [no_remember(), called("days_until"), says("São Paulo"), number(DAYS_TO_XMAS)],
+        seed=["Moro em São Paulo."],
+    ),
+    Case(
+        "question",
+        "Você lembra o nome da minha esposa?",
+        [no_tools(), says("Ana")],
+        seed=["Minha esposa se chama Ana."],
+    ),
     # memory hygiene: no duplicates, contradictions replace old facts, explicit forgetting
     Case(
         "memory",
@@ -249,13 +299,13 @@ CASES = [
     Case(
         "memory",
         "Mudei de time, agora torço pro Náutico.",
-        [remembered("Náutico"), forgotten("Sport"), portuguese()],
+        [remembered("Náutico"), forgotten("Sport"), portuguese(), addresses_user()],
         seed=["Meu time favorito é o Sport.", "Trabalho como engenheiro de software."],
     ),
     Case(
         "memory",
         "Me mudei pra São Paulo mês passado, anota aí.",
-        [remembered("São Paulo"), forgotten("Recife"), portuguese()],
+        [remembered("São Paulo"), forgotten("Recife"), portuguese(), addresses_user()],
         seed=["Moro em Recife.", "Minha mãe se chama Helena."],
     ),
     Case(
@@ -267,19 +317,19 @@ CASES = [
     Case(
         "memory",
         "Guarda que a Ana faz aniversário em 12 de maio.",
-        [remembered("maio"), kept("esposa se chama Ana"), portuguese()],
+        [remembered("maio"), kept("esposa se chama Ana"), portuguese(), addresses_user()],
         seed=["Minha esposa se chama Ana."],
     ),
     Case(
         "memory",
         "Anota que minha filha se chama Laura.",
-        [remembered("Laura"), kept("Pedro"), portuguese()],
+        [remembered("Laura"), kept("Pedro"), portuguese(), addresses_user()],
         seed=["Meu filho se chama Pedro."],
     ),
     Case(
         "memory",
         "Também gosto de pizza de mussarela, guarda aí.",
-        [remembered("mussarela"), kept("calabresa"), portuguese()],
+        [remembered("mussarela"), kept("calabresa"), portuguese(), addresses_user()],
         seed=["Gosto de pizza de calabresa."],
     ),
     # follow-up: the fact is only findable with the previous exchange as context

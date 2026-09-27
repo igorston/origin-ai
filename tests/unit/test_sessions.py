@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage
 from main import app
 from origin.api.routes.chat import get_engine
 from origin.core import ChatTurn, LLMEngine
+from origin.core.llm import split_clauses
 from origin.memory import MemoryHit
 from origin.memory.storage import SessionStore
 from tests.fakes import ScriptedChatModel
@@ -91,6 +92,25 @@ def test_chat_rejects_unknown_session_and_mixed_history(client: TestClient) -> N
     assert client.post("/chat", json={"message": "Oi", "session_id": "nope"}).status_code == 404
     mixed = {"message": "Oi", "session_id": "x", "history": [{"role": "user", "content": "a"}]}
     assert client.post("/chat", json=mixed).status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("message", "clauses"),
+    [
+        (
+            "Onde eu moro e quantos dias faltam pro Natal?",
+            ["Onde eu moro", "quantos dias faltam pro Natal"],
+        ),
+        (
+            "Que horas são agora, e qual o nome do meu cachorro?",
+            ["Que horas são agora", "qual o nome do meu cachorro"],
+        ),
+        ("Onde eu moro?", []),
+        ("Tom e Jerry", []),  # single-word parts are not clauses
+    ],
+)
+def test_split_clauses(message: str, clauses: list[str]) -> None:
+    assert split_clauses(message) == clauses
 
 
 class RecordingMemory:

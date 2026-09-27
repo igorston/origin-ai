@@ -40,11 +40,14 @@ async def test_build_messages_injects_recalled_memory(
     await memory.add([fact])
 
     messages = await fake_engine._build_messages(fact)
-    assert "Long-term memory" in messages[0].content
-    assert f"- {fact}" in messages[0].content
+    # Recalled memories ride on the user message; the system prompt stays static (cacheable).
+    assert messages[0].content == "test"
+    assert "Long-term memory" in messages[-1].content
+    assert f"- {fact}" in messages[-1].content
+    assert messages[-1].content.endswith(f"[User message]\n\n{fact}")
 
     without = await fake_engine._build_messages(fact, use_memory=False)
-    assert without[0].content == "test"
+    assert without[-1].content == fact
 
 
 async def test_recall_failure_falls_back_to_plain_prompt(fake_engine: LLMEngine) -> None:

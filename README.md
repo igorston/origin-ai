@@ -133,6 +133,8 @@ Falhas antes do primeiro evento, como o Ollama fora do ar, viram erros HTTP (503
 
 A cada mensagem, o Origin busca na memória vetorial local (Chroma em `data/.chroma`) os fatos mais relevantes e os injeta no prompt de sistema. Só entram fatos com similaridade de cosseno ≥ `MEMORY_MIN_SCORE` (padrão `0.45`), no máximo `MEMORY_TOP_K` (padrão `4`).
 
+Perguntas compostas diluem a busca: em "Onde eu moro **e** quantos dias faltam pro Natal?", o fato "Moro em São Paulo" pontua 0,44 (abaixo do limiar), contra 0,56 com a pergunta sozinha, e o modelo chegou a inventar outra cidade. Por isso, cada parte da mensagem também é buscada separadamente.
+
 Perguntas de seguimento como "E do que **ela** gosta?" não dizem sozinhas de quem se trata. Por isso, com `MEMORY_CONTEXTUAL_RECALL=true` (padrão), a memória também é consultada com a última troca da conversa antes da pergunta, e cada fato fica com o melhor score entre as duas buscas. Num eval com 28 memórias, sendo 25 de distração, as perguntas de seguimento passaram de 5/15 para 15/15 acertos.
 
 ```bash
@@ -200,11 +202,28 @@ A etapa de roteamento roda com temperatura 0 (`AGENT_ROUTING_TEMPERATURE`), porq
 
 **Verificação de afirmações.** Às vezes o modelo diz "anotei!" sem ter chamado o `remember`. Se a resposta final afirma um efeito (salvar, apagar) cuja tool não rodou naquele turno, o agente faz um turno curto de verificação: o modelo chama a tool agora, para a afirmação virar verdade, ou responde `NONE`. O turno extra só acontece quando uma dessas afirmações aparece.
 
-**Idioma.** As saídas das tools são em inglês e são a última coisa que o modelo lê antes de responder, o que fazia modelos pequenos responderem em inglês. Por isso, o agente detecta o idioma da mensagem (português, inglês ou espanhol, por palavras comuns) e anexa à saída da tool uma instrução **escrita nesse idioma** ("Responda ao usuário em português..."). Duas tentativas anteriores falharam: citar a mensagem do usuário fazia o modelo repeti-la como resposta, e uma instrução em inglês ("reply in Portuguese") ainda puxava palavras em inglês. Limitação conhecida: em cerca de 1 a cada 35 respostas após uma tool, ainda escapa uma palavra em inglês ("algo else").
+**Idioma.** As saídas das tools são em inglês e são a última coisa que o modelo lê antes de responder, o que fazia modelos pequenos responderem em inglês. Por isso, o agente detecta o idioma da mensagem (português, inglês ou espanhol, por palavras comuns) e anexa à saída da tool uma instrução **escrita nesse idioma**: responder por "você" e sem misturar palavras em inglês. Três tentativas anteriores falharam:
+- citar a mensagem do usuário fazia o modelo repeti-la como resposta;
+- uma instrução em inglês ("reply in Portuguese") ainda puxava palavras em inglês ("algo else");
+- uma frase de exemplo na instrução fazia o modelo copiar os fatos do exemplo para respostas reais.
+
+### Latência
+
+Cada turno registra no log o tempo de cada fase (`Turn timings: context=… routing=… tools=… first_token=…`). Três correções saíram dessas medições:
+
+| Causa | Correção | Efeito |
+|---|---|---|
+| `localhost` resolve primeiro para `::1`; no Windows, cada conexão nova espera ~2 s a tentativa IPv6 falhar | `OLLAMA_BASE_URL` padrão `127.0.0.1`, e `localhost` é normalizado automaticamente | primeira busca na memória: 2,1 s → 75 ms |
+| Cada cliente (chat, roteador, juiz, embeddings) cria o cliente HTTP no primeiro uso (~250 ms) | Pré-aquecimento de todos os clientes na inicialização | primeiras requisições sem custo extra |
+| A memória recuperada e a instrução de roteamento ficavam no prompt de sistema, antes das definições das tools, e invalidavam o cache do Ollama (~1.000 tokens reprocessados por chamada) | O prompt de sistema é estático; o que varia vai no fim da mensagem do usuário | roteamento ~200 ms mais rápido |
+
+Primeiro token pelo `/chat/events`, em um servidor recém-iniciado: **~0,2 a 0,5 s** sem tools e **~0,8 a 0,9 s** com tools. Antes, era de 3,1 a 3,9 s nas primeiras requisições.
 
 ### Avaliação do agente
 
-`scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma), `memory` (duplicatas, substituições e esquecimento) e `followup` (recuperar fatos pelo contexto). Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
+`scripts/eval_agent.py` roda casos reais contra os modelos locais, cada um com uma memória isolada. Os grupos são: `single` (uma intenção), `compound` (várias intenções), `session` (não repetir ações de mensagens anteriores e não trocar de idioma), `question` (perguntas sobre fatos salvos são respondidas, não salvas de novo), `memory` (duplicatas, substituições e esquecimento) e `followup` (recuperar fatos pelo contexto). Todo caso também reprova respostas que só repetem a mensagem do usuário.
+
+Resultado atual (qwen3:8b, 10 runs por caso): **349/350**. A única falha é um `remember` desnecessário em 1 de 40 perguntas sobre fatos já salvos, sem efeito: a proteção contra duplicatas impede que algo seja gravado. Use-o para comparar modelos, prompts e configurações antes de mudar um padrão:
 
 ```bash
 python scripts/eval_agent.py                          # configuração atual, 3 runs por caso
