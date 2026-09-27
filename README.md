@@ -73,6 +73,7 @@ A interface é servida pelo próprio Origin (`origin/web/static`): HTML, CSS e J
 | **Chat** | Streaming token a token via `/chat/events`. Cada tool call aparece num cartão expansível com argumentos e resultado. O rodapé de cada resposta mostra o tempo até o 1º token e o total. O botão **Parar** interrompe a geração. |
 | **🧠 Memória** (canto inferior esquerdo, com o total de memórias ativas) | Gerenciador completo: busca por significado (com score), filtros por estado (ativas, arquivadas, todas) e por origem (agente, manual). Permite **editar o texto** (clique em "editar" ou dê duplo clique; Enter salva, Esc cancela, e o fato ganha novo embedding), arquivar, restaurar, apagar e adicionar. Com **✨ Otimizar com IA** (ligado por padrão), o que você escreve passa pela curadoria descrita abaixo antes de ser gravado, e um aviso mostra o que aconteceu ("Dividida em 2 memórias", "Já existia, mesclada"). Desligue para gravar exatamente o que escreveu. Memórias arquivadas mostram qual fato as substituiu. |
 | **⚙ Configurações** (canto inferior esquerdo) | **Geral:** liga ou desliga a memória e as tools (a preferência fica salva no navegador, e o rodapé avisa quando algo está desligado). **Tools:** tools carregadas e suas descrições. **Sistema:** estado do Ollama e dos modelos. |
+| **Medidor de contexto** (canto superior direito do chat) | Quanto da janela do modelo a conversa ocupa (🟢 folgado, 🟡 a partir de 60%, 🔴 a partir de 90%). Clique para ver a composição: instruções e tools, resumo, mensagens recentes, memórias, reserva para a resposta, e quantas otimizações e condensações já ocorreram. Um divisor 🗜 marca onde as mensagens antigas foram resumidas (clique para ver o resumo que o modelo recebe). Perto do limite operacional aparece um aviso. Quando a conversa se encerra, o campo de mensagem é bloqueado e o botão **Continuar em nova conversa** abre uma conversa que já começa com o resumo. Veja [Contexto da conversa](#contexto-da-conversa). |
 | **Indicador de status** | 🟢 online · 🟡 **carregando** (modelos fora da memória do Ollama; a próxima resposta pode levar ~15 s) · 🔴 degradado/offline. |
 
 Tema claro e escuro seguem o sistema, e o layout se adapta ao celular.
@@ -93,11 +94,12 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 |----------|--------|-----------|
 | `/` | GET | Interface web |
 | `/health` | GET | Status, versão, `ready` (modelos carregados) e estado do Ollama (503 se degradado) |
-| `/chat` | POST | Resposta completa `{response, model, session_id, tool_calls}` |
+| `/chat` | POST | Resposta completa `{response, model, session_id, tool_calls, context, compactions, trimmed}` |
 | `/chat/stream` | POST | Resposta em streaming (`text/plain`), só o texto |
-| `/chat/events` | POST | Streaming em SSE com eventos `tool_call`, `token`, `done` e `error` |
+| `/chat/events` | POST | Streaming em SSE com eventos `context`, `tool_call`, `token`, `done` e `error` |
 | `/sessions` | POST / GET | Cria uma conversa / lista as conversas (mais recentes primeiro) |
-| `/sessions/{id}` | GET / DELETE | Conversa com todas as mensagens / apaga a conversa |
+| `/sessions/{id}` | GET / DELETE | Conversa com todas as mensagens, resumo e uso de contexto / apaga a conversa |
+| `/sessions/{id}/continue` | POST | Cria uma conversa nova que começa com o resumo desta (usada quando ela se encerra) |
 | `/memory` | POST | Salva fatos `{texts, metadata?}` (quase-duplicatas não são salvas de novo) |
 | `/memory` | GET | Lista todas as memórias, as mais novas primeiro (`?limit=&offset=`) |
 | `/memory/search` | GET | Busca semântica `?q=...&k=4&min_score=0` (ignora arquivadas) |
@@ -109,8 +111,8 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 
 O corpo do chat aceita `message`, `use_memory` e `use_tools` (ambos com padrão `true`) e **uma** das formas de contexto:
 
-- `session_id`: o Origin guarda a conversa em SQLite (`data/origin.db`) e envia ao modelo as últimas `SESSION_HISTORY_LIMIT` mensagens. As tool calls também ficam registradas.
-- `history`: você mesmo envia o histórico (`[{"role": "user" \| "assistant", "content": "..."}]`), sem nada gravado no servidor.
+- `session_id`: o Origin guarda a conversa em SQLite (`data/origin.db`) e cuida da janela de contexto sozinho (ver [Contexto da conversa](#contexto-da-conversa)). As tool calls também ficam registradas.
+- `history`: você mesmo envia o histórico (`[{"role": "user" \| "assistant", "content": "..."}]`), sem nada gravado no servidor. Se ele não couber na janela, as mensagens mais antigas são descartadas e `trimmed` diz quantas.
 
 ```bash
 SID=$(curl -s -X POST http://127.0.0.1:8000/sessions | jq -r .id)
@@ -130,6 +132,9 @@ curl -N -X POST http://127.0.0.1:8000/chat/events -H "Content-Type: application/
 ```
 
 ```text
+event: context
+data: {"usage": {"used": 1410, "usable": 5120, "percent": 0.275, "state": "ok", ...}, "compactions": [], "trimmed": 0}
+
 event: tool_call
 data: {"name": "remember", "args": {"fact": "Moro em Recife."}, "output": "Saved to long-term memory (id=...)."}
 
@@ -140,10 +145,30 @@ event: token
 data: {"text": "Anotei"}
 
 event: done
-data: {"response": "Anotei que você mora em Recife. Faltam 90 dias para o Natal.", "model": "qwen3:8b", "session_id": null, "tool_calls": [...]}
+data: {"response": "Anotei que você mora em Recife. Faltam 90 dias para o Natal.", "model": "qwen3:8b", "session_id": null, "tool_calls": [...], "context": {...}}
 ```
 
+`context` abre o stream com o orçamento antes do turno e com as otimizações feitas para ele caber. O `done` traz o uso depois do turno, medido pelo Ollama.
+
 Falhas antes do primeiro evento, como o Ollama fora do ar, viram erros HTTP (503/502) nos dois endpoints de streaming. Falhas depois que o stream começou chegam como `event: error`. Com `session_id`, a troca é gravada ao final, inclusive se o cliente desconectar no meio.
+
+### Contexto da conversa
+
+O modelo só enxerga `OLLAMA_NUM_CTX` tokens (6144 por padrão). Sem esse ajuste, o Ollama usava 4096 e cortava em silêncio o começo de prompts longos, inclusive as instruções. Cada turno envia as instruções e os schemas das tools (~1.230 tokens, medidos no warmup), o resumo da conversa, as mensagens recentes, as memórias recuperadas e a mensagem nova. `CONTEXT_REPLY_RESERVE` (1024) fica livre para a resposta. O restante é o orçamento **utilizável**, e é ele que o medidor da interface mostra.
+
+**Otimização automática.** Quando o prompt passa de 75% do orçamento, as mensagens mais antigas são incorporadas a um **resumo contínuo**, até o uso voltar para menos de 50%. As 6 mais recentes continuam literais. O histórico completo continua salvo e visível. Só a visão do modelo muda: ele recebe o resumo no prompt de sistema. O resumo tem três seções:
+
+- **USER FACTS**: fatos e pedidos do usuário (nomes, datas, números, códigos, arquivos, funções), copiados exatamente e nunca condensados.
+- **TOPICS**: assuntos da conversa e as conclusões, condensados livremente.
+- **PRESERVED**: uma rede de segurança no código. Se o modelo deixar de fora um detalhe que o usuário escreveu (um número, um código, `snake_case`, um nome de arquivo, um nome próprio), a frase original do usuário entra aqui **literalmente**.
+
+As estimativas de tokens são calibradas pela medição real do turno anterior. Textos em prosa costumam pesar metade da estimativa, e códigos e preços pesam mais. Sem essa calibração, o chat compactaria cedo demais ou estouraria a reserva.
+
+**Limite operacional.** Incorporar mensagens ao resumo é sustentável e não tem limite. O que perde informação é **condensar** o resumo quando ele passa do orçamento (`CONTEXT_SUMMARY_MAX_TOKENS`, no máximo 20% da janela). Por isso só as condensações são contadas: depois de `CONTEXT_MAX_COMPRESSIONS` (8), o resumo pode crescer além do orçamento, e a conversa **só é encerrada quando nem ele e as últimas mensagens cabem mais na janela**. A conversa encerrada fica somente leitura (409 com `{closed, reason, context}`), e `POST /sessions/{id}/continue` cria uma conversa nova que começa com o resumo. Esse é o único momento em que até os fatos do usuário podem ser condensados, se sozinhos não couberem. Uma mensagem que sozinha não cabe na janela é recusada com 413, e a conversa continua aberta.
+
+**VRAM.** Os modelos de chat e de embeddings precisam caber juntos na GPU. Numa GPU de 8 GB, `qwen3:8b` e `bge-m3` cabem com 6144 (5,5 + 0,6 GB). Com 8192, o Ollama trocava os dois modelos a cada chamada (+4 a 5 s por chamada). O warmup avisa no log quando os modelos não couberem juntos, e o startup avisa quando a janela é pequena demais para a otimização funcionar bem.
+
+`scripts/eval_context.py` roda uma conversa longa real com janela de 4096 tokens e memória e tools desligadas, então os fatos só podem voltar pelo resumo. Ela planta 4 mensagens com fatos (voo e código da reserva, gerente, função com bug, orçamento), faz 16 perguntas de conhecimento geral e depois pergunta pelos fatos. O resultado foi **5/5 fatos recuperados** depois de 4 otimizações, em três rodadas seguidas. Antes das seções fixas e da rede de segurança, eram 0/5, e a conversa chegava ao limite depois de ~25 mensagens.
 
 ### Memória de longo prazo (RAG)
 

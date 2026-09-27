@@ -35,13 +35,15 @@ def test_events_stream_tool_calls_tokens_and_done(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     events = parse_sse(response.text)
-    assert [name for name, _ in events] == ["tool_call", "token", "done"]
-    assert events[0][1] == {"name": "echo", "args": {"text": "hi"}, "output": "echo: hi"}
-    assert events[1][1] == {"text": "feito"}
-    done = events[2][1]
+    assert [name for name, _ in events] == ["context", "tool_call", "token", "done"]
+    assert events[0][1]["usage"]["state"] == "ok" and events[0][1]["compactions"] == []
+    assert events[1][1] == {"name": "echo", "args": {"text": "hi"}, "output": "echo: hi"}
+    assert events[2][1] == {"text": "feito"}
+    done = events[3][1]
     assert done["response"] == "feito"
     assert done["session_id"] == session_id
     assert [c["name"] for c in done["tool_calls"]] == ["echo"]
+    assert done["context"]["used"] > 0
 
     stored = client.get(f"/sessions/{session_id}").json()["messages"]
     assert stored[1]["content"] == "feito"
@@ -63,7 +65,7 @@ def test_events_report_mid_stream_errors_in_band(client: TestClient) -> None:
     response = client.post("/chat/events", json={"message": "oi"})
 
     assert response.status_code == 200
-    assert parse_sse(response.text) == [
+    assert parse_sse(response.text)[1:] == [
         ("token", {"text": "parcial"}),
         ("error", {"detail": "RuntimeError: model crashed"}),
     ]

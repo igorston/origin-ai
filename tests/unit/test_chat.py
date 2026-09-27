@@ -7,12 +7,15 @@ from origin.memory import VectorMemory
 def test_chat(client: TestClient) -> None:
     response = client.post("/chat", json={"message": "Oi"})
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    assert {k: body[k] for k in ("response", "model", "session_id", "tool_calls")} == {
         "response": "Olá, eu sou o Origin.",
         "model": "fake",
         "session_id": None,
         "tool_calls": [],
     }
+    assert body["context"]["state"] == "ok"
+    assert body["compactions"] == [] and body["trimmed"] == 0
 
 
 def test_chat_stream(client: TestClient) -> None:

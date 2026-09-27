@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import math
 import re
 import time
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
@@ -18,6 +20,7 @@ from langchain_core.messages import (
 )
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
@@ -28,6 +31,7 @@ from origin.core.agent import (
     execute_tool_calls,
     unbacked_claims,
 )
+from origin.core.context import JSON_CHARS_PER_TOKEN, estimate_tokens
 from origin.core.language import reply_instruction
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
@@ -90,6 +94,7 @@ def make_chat_model(settings: Settings, temperature: float | None = None) -> Cha
         temperature=settings.ollama_temperature if temperature is None else temperature,
         reasoning=settings.ollama_reasoning,
         keep_alive=settings.ollama_keep_alive,
+        num_ctx=settings.ollama_num_ctx,
         **ollama_client_kwargs(RetryPolicy.from_settings(settings)),
     )
 
@@ -108,9 +113,17 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class TurnUsage(BaseModel):
+    """Tokens of the final answer call, as counted by the model."""
+
+    input_tokens: int
+    output_tokens: int
+
+
 class ChatResult(BaseModel):
     text: str
     tool_calls: list[ToolCallRecord] = []
+    usage: TurnUsage | None = None
 
 
 class LLMEngine:
@@ -215,13 +228,17 @@ class LLMEngine:
         history: Sequence[ChatTurn] = (),
         use_memory: bool = True,
         with_tools: bool = False,
+        summary: str = "",
     ) -> list[BaseMessage]:
         # The system prompt (and the tool schemas the chat template appends to it) stays
         # identical across calls and turns, so Ollama reuses its KV cache for that prefix.
-        # Everything that varies — recalled memories, routing instructions — goes at the end.
+        # Everything that varies per turn — recalled memories, routing instructions — goes
+        # at the end. The conversation summary changes only when the context is optimized.
         sections = [self.system_prompt]
         if with_tools:
             sections.append(load_prompt("tools"))
+        if summary:
+            sections.append(load_prompt("conversation_summary_context").format(summary=summary))
         messages: list[BaseMessage] = [SystemMessage("\n\n".join(sections))]
         for turn in history:
             cls = HumanMessage if turn.role == "user" else AIMessage
@@ -237,12 +254,16 @@ class LLMEngine:
         history: Sequence[ChatTurn] = (),
         use_memory: bool = True,
         use_tools: bool = True,
-    ) -> AsyncIterator[str | ToolCallRecord]:
-        """Agent loop: yields text chunks as they stream and a record per executed tool call."""
+        summary: str = "",
+    ) -> AsyncIterator[str | ToolCallRecord | TurnUsage]:
+        """Agent loop: yields text chunks as they stream, a record per executed tool call,
+        and finally the token usage of the answer (when the model reports it)."""
         timings = TurnTimings()
         bound, tools = self._bind_tools(use_tools)
         with timings.phase("context"):
-            messages = await self._build_messages(message, history, use_memory, bool(tools))
+            messages = await self._build_messages(
+                message, history, use_memory, bool(tools), summary
+            )
         executed: list[ToolCallRecord] = []
 
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
@@ -323,6 +344,12 @@ class LLMEngine:
                         )
                     for record in records:
                         yield record
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    yield TurnUsage(
+                        input_tokens=usage.get("input_tokens", 0),
+                        output_tokens=usage.get("output_tokens", 0),
+                    )
                 return
         finally:
             logger.info("Turn timings: %s | tools=%s", timings, [r.name for r in executed])
@@ -360,15 +387,19 @@ class LLMEngine:
         history: Sequence[ChatTurn] = (),
         use_memory: bool = True,
         use_tools: bool = True,
+        summary: str = "",
     ) -> ChatResult:
         text: list[str] = []
         tool_calls: list[ToolCallRecord] = []
-        async for event in self.events(message, history, use_memory, use_tools):
+        usage = None
+        async for event in self.events(message, history, use_memory, use_tools, summary):
             if isinstance(event, str):
                 text.append(event)
+            elif isinstance(event, TurnUsage):
+                usage = event
             else:
                 tool_calls.append(event)
-        return ChatResult(text="".join(text), tool_calls=tool_calls)
+        return ChatResult(text="".join(text), tool_calls=tool_calls, usage=usage)
 
     async def stream(
         self,
@@ -376,7 +407,35 @@ class LLMEngine:
         history: Sequence[ChatTurn] = (),
         use_memory: bool = True,
         use_tools: bool = True,
+        summary: str = "",
     ) -> AsyncIterator[str]:
-        async for event in self.events(message, history, use_memory, use_tools):
+        async for event in self.events(message, history, use_memory, use_tools, summary):
             if isinstance(event, str):
                 yield event
+
+    # ------------------------------------------------------------ context accounting
+
+    def fixed_prompt(self, with_tools: bool = True) -> list[BaseMessage]:
+        """The part of every prompt that does not depend on the conversation."""
+        sections = [self.system_prompt]
+        if with_tools and self.tools:
+            sections.append(load_prompt("tools"))
+        return [SystemMessage("\n\n".join(sections))]
+
+    def estimate_base_tokens(self) -> int:
+        """Rough size of the fixed prompt, including the tool schemas the chat template
+        injects. Replaced by `measure_base_tokens` once the model is available."""
+        schemas = json.dumps([convert_to_openai_tool(t) for t in self.tools.values()])
+        # JSON tokenizes looser than prose (measured: 802 real vs 1238 at 2.5 chars/token).
+        schema_tokens = math.ceil(len(schemas) / JSON_CHARS_PER_TOKEN)
+        return estimate_tokens(self.fixed_prompt()[0].content) + schema_tokens
+
+    async def measure_base_tokens(self) -> int:
+        """Exact size of the fixed prompt, as counted by the model's own tokenizer."""
+        bound, _ = self._bind_tools(True)
+        probe = "ok"
+        reply = await bound.ainvoke([*self.fixed_prompt(), HumanMessage(probe)])
+        measured = (reply.usage_metadata or {}).get("input_tokens", 0)
+        return (
+            max(0, measured - estimate_tokens(probe)) if measured else self.estimate_base_tokens()
+        )

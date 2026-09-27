@@ -1,20 +1,22 @@
 // Thin client for the Origin HTTP API.
 
 export class ApiError extends Error {
-  constructor(status, detail) {
-    super(detail || `HTTP ${status}`);
+  /** `detail` keeps structured error bodies (e.g. a chat closed at its context limit). */
+  constructor(status, message, detail = null) {
+    super(message || `HTTP ${status}`);
     this.status = status;
+    this.detail = detail;
   }
 }
 
-async function errorDetail(response) {
+async function apiError(response) {
   try {
-    const body = await response.json();
-    if (typeof body.detail === "string") return body.detail;
-    if (Array.isArray(body.detail)) return body.detail.map((d) => d.msg).join("; ");
-    return JSON.stringify(body);
+    const { detail } = await response.json();
+    if (typeof detail === "string") return new ApiError(response.status, detail);
+    if (Array.isArray(detail)) return new ApiError(response.status, detail.map((d) => d.msg).join("; "));
+    return new ApiError(response.status, detail?.message || JSON.stringify(detail), detail);
   } catch {
-    return response.statusText;
+    return new ApiError(response.status, response.statusText);
   }
 }
 
@@ -24,7 +26,7 @@ async function request(method, path, body) {
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!response.ok) throw new ApiError(response.status, await errorDetail(response));
+  if (!response.ok) throw await apiError(response);
   return response.status === 204 ? null : response.json();
 }
 
@@ -36,6 +38,7 @@ export const api = {
   session: (id) => request("GET", `/sessions/${id}`),
   createSession: (title = "") => request("POST", "/sessions", { title }),
   deleteSession: (id) => request("DELETE", `/sessions/${id}`),
+  continueSession: (id) => request("POST", `/sessions/${id}/continue`),
 
   memories: (limit = 500) => request("GET", `/memory?limit=${limit}`),
   searchMemory: (q, k = 10) =>
@@ -78,7 +81,7 @@ export async function* streamChat(body, signal) {
     body: JSON.stringify(body),
     signal,
   });
-  if (!response.ok) throw new ApiError(response.status, await errorDetail(response));
+  if (!response.ok) throw await apiError(response);
 
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";

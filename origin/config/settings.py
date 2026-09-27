@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     ollama_temperature: float = 0.7
     # None = model default; False disables "thinking" on reasoning models (e.g. qwen3).
     ollama_reasoning: bool | None = False
+    # Context window in tokens. Without it Ollama silently used 4096 and cut the start of
+    # long prompts (system prompt included). Every chat client must use the same value, or
+    # Ollama reloads the model. The chat and embedding models must fit in VRAM together:
+    # on an 8 GB GPU, qwen3:8b + bge-m3 fit at 6144 (5.5 + 0.6 GB); at 8192 Ollama swapped
+    # them on every call (+4-5s each). The context manager keeps prompts within this.
+    ollama_num_ctx: int = 6144
     # Seconds Ollama keeps models loaded after the last request (-1 = forever).
     ollama_keep_alive: int = 1800
     # Preload models on startup so the first request does not pay the load time.
@@ -58,8 +64,18 @@ class Settings(BaseSettings):
     calibration_path: str = "./data/calibration.json"
     # JSON backups of every memory, written before a reindex.
     memory_backup_dir: str = "./data/backups"
-    # Most recent stored messages sent to the model as context for a session.
-    session_history_limit: int = 20
+    # Context optimization (see origin/core/context.py). Budgets are in tokens.
+    context_window: int | None = None  # defaults to ollama_num_ctx (override for tests)
+    context_reply_reserve: int = 1024  # kept free for the answer and tool rounds
+    context_warn_at: float = 0.6  # UI warning, as a fraction of the usable budget
+    context_compact_at: float = 0.75  # fold old messages into the summary past this...
+    context_compact_target: float = 0.5  # ...until usage is back under this
+    context_keep_recent: int = 6  # messages kept verbatim when folding
+    context_min_recent: int = 2  # never fold below this
+    context_summary_max_tokens: int = 800  # condensed past this (capped at 20% of budget)
+    # Operational limit: the chat closes when the summary would need its N+1-th
+    # condensation (each one loses detail). Folding new messages in is not limited.
+    context_max_compressions: int = 8
 
     @field_validator("ollama_base_url")
     @classmethod

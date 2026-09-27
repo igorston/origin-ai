@@ -1,15 +1,24 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
-from origin.config import Settings, get_settings
-from origin.core import ChatTurn, LLMEngine, ToolCallRecord
-from origin.memory.storage import SessionStore
+from origin.core import ChatTurn, LLMEngine, ToolCallRecord, TurnUsage
+from origin.core.context import (
+    Compaction,
+    ContextClosed,
+    ContextManager,
+    ContextUsage,
+    MessageTooLong,
+    Optimized,
+    estimate_tokens,
+)
+from origin.memory.storage import Session, SessionStore, StoredMessage
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -37,6 +46,9 @@ class ChatResponse(BaseModel):
     model: str
     session_id: str | None = None
     tool_calls: list[ToolCallRecord] = []
+    context: ContextUsage | None = None  # after this turn
+    compactions: list[Compaction] = []  # context optimizations done before this turn
+    trimmed: int = 0  # client-sent history: oldest messages dropped to fit
 
 
 def get_engine(request: Request) -> LLMEngine:
@@ -47,32 +59,161 @@ def get_sessions(request: Request) -> SessionStore:
     return request.app.state.sessions
 
 
+def get_context(request: Request) -> ContextManager:
+    return request.app.state.context
+
+
 Engine = Annotated[LLMEngine, Depends(get_engine)]
 Sessions = Annotated[SessionStore, Depends(get_sessions)]
-AppSettings = Annotated[Settings, Depends(get_settings)]
+Context = Annotated[ContextManager, Depends(get_context)]
 
 
-async def resolve_history(body: ChatRequest, sessions: SessionStore, limit: int) -> list[ChatTurn]:
+@dataclass
+class PreparedTurn:
+    history: list[ChatTurn]
+    summary: str = ""
+    session: Session | None = None
+    compactions: list[Compaction] = field(default_factory=list)
+    total_compactions: int = 0
+    total_compressions: int = 0
+    summarized: int = 0
+    trimmed: int = 0
+    before: ContextUsage | None = None
+    scale: float = 1.0
+
+
+def closed_error(reason: str, usage: ContextUsage | None) -> HTTPException:
+    return HTTPException(
+        status.HTTP_409_CONFLICT,
+        detail={
+            "message": f"Esta conversa foi encerrada: {reason}. O histórico está salvo; "
+            "continue numa nova conversa (POST /sessions/{id}/continue) levando o resumo.",
+            "closed": True,
+            "reason": reason,
+            "context": usage.model_dump() if usage else None,
+        },
+    )
+
+
+async def persist_optimization(
+    sessions: SessionStore, session_id: str, rows: list[StoredMessage], result: Optimized
+) -> None:
+    if not result.steps:
+        return
+    fields: dict = {
+        "summary": result.summary,
+        "compactions": result.compactions,
+        "compressions": result.compressions,
+        # The last measurement described the old layout; estimates take over until the
+        # next turn measures again.
+        "context_tokens": 0,
+    }
+    if folded := rows[: len(rows) - len(result.turns)]:
+        fields["summarized_upto"] = folded[-1].id
+    await sessions.update(session_id, **fields)
+
+
+async def prepare_turn(
+    body: ChatRequest, sessions: SessionStore, context: ContextManager
+) -> PreparedTurn:
+    """Fit the conversation into the context window before the model sees it."""
     if body.session_id is None:
-        return body.history
-    if await sessions.get(body.session_id) is None:
+        turns, trimmed = context.trim(list(body.history), body.message)
+        return PreparedTurn(
+            history=turns, trimmed=trimmed, before=context.usage("", turns, body.message)
+        )
+
+    session = await sessions.get(body.session_id)
+    if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Session {body.session_id!r} not found")
-    stored = await sessions.messages(body.session_id, limit=limit)
-    return [ChatTurn(role=m.role, content=m.content) for m in stored]
+    if session.status == "closed":
+        raise closed_error(session.closed_reason, None)
+
+    rows = await sessions.messages(session.id, after_id=session.summarized_upto)
+    summarized = session.message_count - len(rows)
+    try:
+        result = await context.optimize(
+            session.summary,
+            rows,
+            body.message,
+            session.compactions,
+            session.compressions,
+            summarized,
+            measured=session.context_tokens or None,
+        )
+    except MessageTooLong as exc:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"A mensagem tem ~{exc.tokens} tokens e só cabem ~{exc.limit} na janela de "
+            "contexto. Divida-a em partes menores.",
+        ) from exc
+    except ContextClosed as exc:
+        # Keep the optimization done before giving up: a continuation starts from it.
+        if exc.partial is not None:
+            await persist_optimization(sessions, session.id, rows, exc.partial)
+        await sessions.update(session.id, status="closed", closed_reason=exc.reason)
+        raise closed_error(exc.reason, exc.usage) from exc
+
+    kept = result.turns
+    await persist_optimization(sessions, session.id, rows, result)
+    return PreparedTurn(
+        history=[ChatTurn(role=m.role, content=m.content) for m in kept],
+        summary=result.summary,
+        session=session,
+        compactions=result.steps,
+        total_compactions=result.compactions,
+        total_compressions=result.compressions,
+        summarized=result.summarized,
+        before=context.usage(
+            result.summary,
+            kept,
+            body.message,
+            compactions=result.compactions,
+            compressions=result.compressions,
+            summarized=result.summarized,
+            scale=result.scale,
+        ),
+        scale=result.scale,
+    )
 
 
-async def save_exchange(
+async def finish_turn(
+    turn: PreparedTurn,
+    body: ChatRequest,
     sessions: SessionStore,
-    session_id: str | None,
-    message: str,
+    context: ContextManager,
     answer: str,
     tool_calls: list[ToolCallRecord],
-) -> None:
-    if session_id is None:
-        return
-    await sessions.append(session_id, "user", message)
-    await sessions.append(
-        session_id, "assistant", answer, [call.model_dump() for call in tool_calls]
+    usage: TurnUsage | None,
+) -> ContextUsage:
+    """Persist the exchange (if any) and report the context after the turn."""
+    user_tokens = estimate_tokens(body.message)
+    answer_tokens = usage.output_tokens if usage else estimate_tokens(answer)
+    measured = usage.input_tokens + usage.output_tokens if usage else None
+    if turn.session is not None:
+        await sessions.append(turn.session.id, "user", body.message, tokens=user_tokens)
+        await sessions.append(
+            turn.session.id,
+            "assistant",
+            answer,
+            [call.model_dump() for call in tool_calls],
+            tokens=answer_tokens,
+        )
+        if measured is not None:
+            await sessions.update(turn.session.id, context_tokens=measured)
+    history = [
+        *turn.history,
+        ChatTurn(role="user", content=body.message),
+        ChatTurn(role="assistant", content=answer),
+    ]
+    return context.usage(
+        turn.summary,
+        history,
+        compactions=turn.total_compactions,
+        compressions=turn.total_compressions,
+        summarized=turn.summarized,
+        measured=measured,
+        scale=turn.scale,
     )
 
 
@@ -92,47 +233,72 @@ async def prefetch(events: AsyncIterator[T]) -> AsyncIterator[T]:
 
 @router.post("", response_model=ChatResponse)
 async def chat(
-    body: ChatRequest, engine: Engine, sessions: Sessions, settings: AppSettings
+    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context
 ) -> ChatResponse:
-    history = await resolve_history(body, sessions, settings.session_history_limit)
-    result = await engine.generate(body.message, history, body.use_memory, body.use_tools)
-    await save_exchange(sessions, body.session_id, body.message, result.text, result.tool_calls)
+    turn = await prepare_turn(body, sessions, context)
+    result = await engine.generate(
+        body.message, turn.history, body.use_memory, body.use_tools, turn.summary
+    )
+    after = await finish_turn(
+        turn, body, sessions, context, result.text, result.tool_calls, result.usage
+    )
     return ChatResponse(
         response=result.text,
         model=engine.model_name,
         session_id=body.session_id,
         tool_calls=result.tool_calls,
+        context=after,
+        compactions=turn.compactions,
+        trimmed=turn.trimmed,
     )
 
 
+class TurnDone(BaseModel):
+    context: ContextUsage
+
+
 async def run_and_persist(
-    body: ChatRequest, engine: LLMEngine, sessions: SessionStore, history: list[ChatTurn]
-) -> AsyncIterator[str | ToolCallRecord]:
-    """Relay engine events and save the exchange to the session once the turn ends."""
+    turn: PreparedTurn,
+    body: ChatRequest,
+    engine: LLMEngine,
+    sessions: SessionStore,
+    context: ContextManager,
+) -> AsyncIterator[str | ToolCallRecord | TurnDone]:
+    """Relay engine events, then save the exchange and report the context."""
     parts: list[str] = []
     tool_calls: list[ToolCallRecord] = []
+    usage: TurnUsage | None = None
+    finished = False
     try:
-        async for event in engine.events(body.message, history, body.use_memory, body.use_tools):
+        async for event in engine.events(
+            body.message, turn.history, body.use_memory, body.use_tools, turn.summary
+        ):
+            if isinstance(event, TurnUsage):
+                usage = event
+                continue
             if isinstance(event, str):
                 parts.append(event)
             else:
                 tool_calls.append(event)
             yield event
+        after = await finish_turn(turn, body, sessions, context, "".join(parts), tool_calls, usage)
+        finished = True
+        yield TurnDone(context=after)
     finally:
         # Also runs when the client disconnects mid-stream: keep what was produced.
-        if parts or tool_calls:
-            await save_exchange(sessions, body.session_id, body.message, "".join(parts), tool_calls)
+        if not finished and (parts or tool_calls):
+            await finish_turn(turn, body, sessions, context, "".join(parts), tool_calls, usage)
 
 
 @router.post("/stream")
 async def chat_stream(
-    body: ChatRequest, engine: Engine, sessions: Sessions, settings: AppSettings
+    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context
 ) -> StreamingResponse:
     """Plain-text token stream (easy to consume with curl)."""
-    history = await resolve_history(body, sessions, settings.session_history_limit)
+    turn = await prepare_turn(body, sessions, context)
 
     async def text_only() -> AsyncIterator[str]:
-        async for event in run_and_persist(body, engine, sessions, history):
+        async for event in run_and_persist(turn, body, engine, sessions, context):
             if isinstance(event, str):
                 yield event
 
@@ -145,20 +311,32 @@ def sse(event: str, data: object) -> str:
 
 @router.post("/events")
 async def chat_events(
-    body: ChatRequest, engine: Engine, sessions: Sessions, settings: AppSettings
+    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context
 ) -> StreamingResponse:
-    """Server-Sent Events: `tool_call`, `token`, then `done` (or `error` mid-stream)."""
-    history = await resolve_history(body, sessions, settings.session_history_limit)
-    events = await prefetch(run_and_persist(body, engine, sessions, history))
+    """Server-Sent Events: `context` (budget, and any optimization done), `tool_call`,
+    `token`, then `done` with the context after the turn (or `error` mid-stream)."""
+    turn = await prepare_turn(body, sessions, context)
+    events = await prefetch(run_and_persist(turn, body, engine, sessions, context))
 
     async def encode() -> AsyncIterator[str]:
+        yield sse(
+            "context",
+            {
+                "usage": turn.before.model_dump() if turn.before else None,
+                "compactions": [c.model_dump() for c in turn.compactions],
+                "trimmed": turn.trimmed,
+            },
+        )
         parts: list[str] = []
         tool_calls: list[ToolCallRecord] = []
+        after = None
         try:
             async for event in events:
                 if isinstance(event, str):
                     parts.append(event)
                     yield sse("token", {"text": event})
+                elif isinstance(event, TurnDone):
+                    after = event.context
                 else:
                     tool_calls.append(event)
                     yield sse("tool_call", event.model_dump())
@@ -171,6 +349,9 @@ async def chat_events(
             model=engine.model_name,
             session_id=body.session_id,
             tool_calls=tool_calls,
+            context=after,
+            compactions=turn.compactions,
+            trimmed=turn.trimmed,
         )
         yield sse("done", done.model_dump())
 

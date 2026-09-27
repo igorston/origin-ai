@@ -77,11 +77,25 @@ async def warmup(
         logger.warning("Client warmup failed: %s", failures[0])
     else:
         logger.info("Clients warmed up in %.1fs", time.perf_counter() - start)
+    status = await check_ollama(settings)
+    if status.healthy and not status.ready:
+        # Ollama evicted one model to fit the other: every chat/embedding switch would
+        # reload a model (measured +4-5s per call with num_ctx 8192 on an 8 GB GPU).
+        logger.warning(
+            "Chat and embedding models do not fit in memory together (loaded: %s). "
+            "Lower OLLAMA_NUM_CTX (now %d) or use smaller models.",
+            ", ".join(name for name, up in status.loaded.items() if up) or "none",
+            settings.ollama_num_ctx,
+        )
 
 
 async def _load_models(settings: Settings) -> None:
     requests = [
-        ("/api/generate", {"model": settings.ollama_model}),
+        # Same num_ctx as the chat clients, or the first real request reloads the model.
+        (
+            "/api/generate",
+            {"model": settings.ollama_model, "options": {"num_ctx": settings.ollama_num_ctx}},
+        ),
         ("/api/embed", {"model": settings.ollama_embed_model, "input": "warmup"}),
     ]
     start = time.perf_counter()

@@ -32,10 +32,20 @@ const el = {
   toolList: $("#tool-list"),
   systemInfo: $("#system-info"),
   toast: $("#toast"),
+  // context
+  contextMeter: $("#context-meter"),
+  contextFill: $("#context-fill"),
+  contextLabel: $("#context-label"),
+  contextPanel: $("#context-panel"),
+  contextNotice: $("#context-notice"),
+  contextNoticeText: $("#context-notice-text"),
+  continueSession: $("#continue-session"),
 };
 
 const state = {
   sessionId: null,
+  context: null, // ContextUsage of the open session
+  closed: null, // reason, when the open session hit its operational limit
   streaming: null, // AbortController of the in-flight turn
   memory: { status: "active", editing: null, highlight: new Set() },
 };
@@ -67,7 +77,7 @@ function h(tag, attrs = {}, ...children) {
     else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
     else if (value !== false && value != null) node.setAttribute(key, value === true ? "" : value);
   }
-  for (const child of children.flat()) {
+  for (const child of children.flat(Infinity)) {
     if (child != null && child !== false) node.append(child);
   }
   return node;
@@ -75,7 +85,7 @@ function h(tag, attrs = {}, ...children) {
 
 /** replaceChildren that skips null/false (the DOM would render them as the text "null"). */
 function setChildren(node, ...children) {
-  node.replaceChildren(...children.flat().filter((child) => child != null && child !== false));
+  node.replaceChildren(...children.flat(Infinity).filter((child) => child != null && child !== false));
 }
 
 function toast(message, kind = "error") {
@@ -176,7 +186,8 @@ async function refreshSessions() {
       h("div", { class: `session${s.id === state.sessionId ? " active" : ""}`, "data-id": s.id },
         h("button", { class: "session-open", type: "button", onclick: () => openSession(s.id) },
           h("span", { class: "session-title" }, s.title || "Nova conversa"),
-          h("span", { class: "session-meta" }, `${formatDate(s.updated_at)} · ${s.message_count} msg`),
+          h("span", { class: "session-meta" },
+            `${formatDate(s.updated_at)} · ${s.message_count} msg${s.status === "closed" ? " · encerrada" : ""}`),
         ),
         h("button", { class: "session-delete", type: "button", title: "Apagar conversa", "aria-label": "Apagar conversa",
           onclick: (event) => { event.stopPropagation(); removeSession(s.id, s.title); } }, "✕"),
@@ -190,6 +201,8 @@ function resetChat(title = "Nova conversa") {
   el.chatTitle.textContent = title;
   el.messages.replaceChildren(el.empty);
   el.empty.hidden = false;
+  renderContext(null);
+  setClosed(null);
 }
 
 async function openSession(id) {
@@ -199,11 +212,18 @@ async function openSession(id) {
     const session = await api.session(id);
     state.sessionId = id;
     resetChat(session.title || "Nova conversa");
-    el.empty.hidden = session.messages.length > 0;
+    el.empty.hidden = session.messages.length > 0 || Boolean(session.summary);
+    // A continued conversation starts from its predecessor's summary.
+    if (session.summary && session.summarized_upto === 0) el.messages.append(contextDivider({ inherited: true }));
     for (const message of session.messages) {
       if (message.role === "user") addUserMessage(message.content, message.created_at);
       else addAssistantMessage({ text: message.content, toolCalls: message.tool_calls, at: message.created_at });
+      if (message.id === session.summarized_upto) {
+        el.messages.append(contextDivider({ summarized: session.context.summarized_messages }));
+      }
     }
+    renderContext(session.context);
+    setClosed(session.status === "closed" ? session.closed_reason || "limite de contexto atingido" : null);
     scrollToBottom(true);
     refreshSessions();
   } catch (error) {
@@ -235,12 +255,12 @@ async function removeSession(id, title) {
 
 function addUserMessage(text, at) {
   el.empty.hidden = true;
-  el.messages.append(
-    h("article", { class: "message user" },
-      h("div", { class: "bubble" }, text),
-      h("div", { class: "meta" }, formatDate(at || new Date().toISOString())),
-    ),
+  const article = h("article", { class: "message user" },
+    h("div", { class: "bubble" }, text),
+    h("div", { class: "meta" }, formatDate(at || new Date().toISOString())),
   );
+  el.messages.append(article);
+  return article;
 }
 
 function summarizeArgs(args = {}) {
@@ -278,6 +298,7 @@ function addAssistantMessage({ text = "", toolCalls = [], at = null, pending = f
     addTool(call) { tools.append(toolCard(call)); },
     setMeta(value) { meta.textContent = value; },
     finish() { pending = false; article.classList.remove("pending"); render(); },
+    remove() { article.remove(); },
     fail(message) {
       pending = false;
       article.classList.remove("pending");
@@ -292,21 +313,25 @@ function addAssistantMessage({ text = "", toolCalls = [], at = null, pending = f
 
 async function send(message) {
   message = message.trim();
-  if (!message || state.streaming) return;
+  if (!message || state.streaming || state.closed) return;
 
+  // Busy from here on: a second Enter while the session is being created would
+  // otherwise start another conversation.
+  setStreaming(new AbortController());
   if (!state.sessionId) {
     try {
       state.sessionId = (await api.createSession()).id;
     } catch (error) {
       toast(describeError(error));
+      setStreaming(null);
+      el.input.value = message;
       return;
     }
   }
 
-  addUserMessage(message);
+  const userArticle = addUserMessage(message);
   const reply = addAssistantMessage({ pending: true });
   scrollToBottom(true);
-  setStreaming(new AbortController());
 
   const started = performance.now();
   let firstToken = null;
@@ -327,6 +352,15 @@ async function send(message) {
         toolCount += 1;
         touchedMemory ||= MEMORY_TOOLS.has(data.name);
         reply.addTool(data);
+      } else if (event === "context") {
+        // Old messages were folded into the summary before this turn.
+        if (data.compactions.length) {
+          const folded = data.compactions.reduce((sum, c) => sum + c.folded, 0);
+          userArticle.before(contextDivider({ folded, summarized: data.usage?.summarized_messages }));
+        }
+        if (data.usage) renderContext(data.usage);
+      } else if (event === "done") {
+        if (data.context) renderContext(data.context);
       } else if (event === "error") {
         throw new Error(data.detail);
       }
@@ -334,7 +368,16 @@ async function send(message) {
     }
     reply.finish();
   } catch (error) {
-    reply.fail(error.name === "AbortError" ? "Geração interrompida." : describeError(error));
+    if (error instanceof ApiError && error.detail?.closed) {
+      // Refused, not stored: give the text back so it can go to the next conversation.
+      userArticle.remove();
+      reply.remove();
+      el.input.value = message;
+      if (error.detail.context) renderContext({ ...error.detail.context, state: "closed" });
+      setClosed(error.detail.reason);
+    } else {
+      reply.fail(error.name === "AbortError" ? "Geração interrompida." : describeError(error));
+    }
   } finally {
     const parts = [formatDate(new Date().toISOString())];
     if (firstToken != null) parts.push(`1º token ${seconds(firstToken)}`);
@@ -355,8 +398,151 @@ function setStreaming(controller) {
   state.streaming = controller;
   el.send.hidden = Boolean(controller);
   el.stop.hidden = !controller;
-  el.input.disabled = Boolean(controller);
-  if (!controller) el.input.focus();
+  el.input.disabled = Boolean(controller) || Boolean(state.closed);
+  el.send.disabled = Boolean(state.closed);
+  if (!controller && !state.closed) el.input.focus();
+}
+
+// ---------------------------------------------------------------- context window
+
+const tokens = (n) => n.toLocaleString("pt-BR");
+const CONTEXT_STATES = {
+  ok: "Contexto folgado",
+  warning: "Contexto enchendo",
+  critical: "Contexto quase cheio",
+  closed: "Conversa encerrada",
+};
+// Close to the operational limit: say so before the chat actually closes.
+const COMPRESSIONS_WARNING = 2;
+
+function renderContext(usage) {
+  state.context = usage;
+  el.contextMeter.hidden = !usage;
+  if (!usage) {
+    el.contextPanel.hidden = true;
+    renderNotice();
+    return;
+  }
+  const percent = Math.min(usage.percent, 1);
+  el.contextMeter.className = `context-meter ${usage.state}`;
+  el.contextFill.style.width = `${Math.round(percent * 100)}%`;
+  el.contextLabel.textContent = `${usage.measured ? "" : "~"}${Math.round(usage.percent * 100)}%`;
+  el.contextMeter.title =
+    `${CONTEXT_STATES[usage.state]}: ${tokens(usage.used)} de ${tokens(usage.usable)} tokens` +
+    (usage.compactions ? ` · otimizado ${usage.compactions}×` : "");
+  if (!el.contextPanel.hidden) renderContextPanel();
+  renderNotice();
+}
+
+function renderContextPanel() {
+  const u = state.context;
+  if (!u) return;
+  // Before a turn the parts are estimates; after one, Ollama reports the real total.
+  const parts = [
+    ["base", "Instruções e tools", u.base],
+    ["summary", "Resumo da conversa", u.summary],
+    ["history", "Mensagens recentes", u.history],
+    ["memory", "Memórias recuperadas", u.memory],
+    ["message", "Mensagem atual", u.message],
+  ].filter(([, , value]) => value > 0);
+  const scale = Math.max(u.usable, 1);
+  setChildren(el.contextPanel,
+    h("h3", {}, `${CONTEXT_STATES[u.state]} · ${Math.round(u.percent * 100)}%`),
+    h("div", { class: "context-stack", title: "Composição estimada" },
+      parts.map(([key, label, value]) =>
+        h("span", { class: `seg-${key}`, style: `width:${(value / scale) * 100}%`, title: `${label}: ${tokens(value)}` }))),
+    h("dl", { class: "context-rows" },
+      h("dt", {}, u.measured ? "Em uso (medido)" : "Em uso (estimado)"), h("dd", {}, `${tokens(u.used)} / ${tokens(u.usable)}`),
+      parts.map(([key, label, value]) => [
+        h("dt", {}, h("span", { class: `swatch seg-${key}` }), label), h("dd", {}, `~${tokens(value)}`),
+      ]),
+      h("dt", {}, "Reservado para a resposta"), h("dd", {}, tokens(u.window - u.usable)),
+      h("dt", {}, "Janela do modelo"), h("dd", {}, tokens(u.window)),
+      h("dt", {}, "Mensagens resumidas"), h("dd", {}, String(u.summarized_messages)),
+      h("dt", {}, "Otimizações"), h("dd", {}, String(u.compactions)),
+      h("dt", { title: "Cada condensação do resumo perde detalhes; no limite, a conversa é encerrada" }, "Condensações do resumo"),
+      h("dd", {}, `${u.compressions} / ${u.max_compressions}`),
+    ),
+    h("p", {},
+      "Perto do limite, as mensagens mais antigas são resumidas automaticamente para o modelo ",
+      "(o histórico completo continua salvo aqui). Fatos, nomes, números e códigos que você escreveu são preservados. ",
+      "A conversa só é encerrada quando nem o resumo condensado cabe mais."),
+  );
+}
+
+function renderNotice() {
+  const u = state.context;
+  el.contextNotice.classList.toggle("closed", Boolean(state.closed));
+  if (state.closed) {
+    el.contextNoticeText.textContent =
+      `Esta conversa foi encerrada: ${state.closed}. O histórico está salvo. Continue numa nova conversa, que começa com o resumo desta.`;
+    el.continueSession.hidden = false;
+    el.contextNotice.hidden = false;
+    return;
+  }
+  const nearLimit = u && u.max_compressions - u.compressions <= COMPRESSIONS_WARNING && u.compressions > 0;
+  if (nearLimit) {
+    const left = u.max_compressions - u.compressions;
+    el.contextNoticeText.textContent =
+      (left > 0
+        ? `Conversa perto do limite operacional: o resumo pode ser condensado só mais ${left} vez${left === 1 ? "" : "es"}. `
+        : `O resumo não pode mais ser condensado: a conversa será encerrada quando o contexto encher (${Math.round(u.percent * 100)}% agora). `) +
+      "Se preferir, continue numa nova conversa agora (ela leva o resumo).";
+  } else if (u?.state === "critical") {
+    el.contextNoticeText.textContent =
+      "Contexto quase cheio. Na próxima mensagem, as mais antigas serão resumidas automaticamente.";
+  }
+  el.continueSession.hidden = !nearLimit;
+  el.contextNotice.hidden = !(nearLimit || u?.state === "critical");
+}
+
+function setClosed(reason) {
+  state.closed = reason;
+  el.input.disabled = Boolean(reason) || Boolean(state.streaming);
+  el.send.disabled = Boolean(reason);
+  el.input.placeholder = reason ? "Conversa encerrada: continue numa nova conversa" : "Mensagem para o Origin…";
+  renderNotice();
+}
+
+/** Divider marking where the model's view switches from the summary to real messages. */
+function contextDivider({ folded = 0, summarized = 0, inherited = false } = {}) {
+  const label = inherited
+    ? "↪ Continuação: o modelo recebeu o resumo da conversa anterior"
+    : folded
+      ? `🗜 Contexto otimizado: ${folded} mensage${folded === 1 ? "m resumida" : "ns resumidas"}` +
+        (summarized > folded ? ` (${summarized} no total)` : "")
+      : `🗜 As ${summarized} mensagens acima estão resumidas para o modelo`;
+  const text = h("div", { class: "summary-text" }, "Carregando resumo…");
+  const details = h("details", { class: "context-divider" }, h("summary", { title: "Ver o resumo que o modelo recebe" }, label), text);
+  const sessionId = state.sessionId;
+  details.addEventListener("toggle", async () => {
+    if (!details.open) return;
+    try {
+      text.textContent = (await api.session(sessionId)).summary || "(vazio)";
+    } catch (error) {
+      text.textContent = describeError(error);
+    }
+  });
+  return details;
+}
+
+async function continueConversation() {
+  if (!state.sessionId || state.streaming) return;
+  el.continueSession.disabled = true;
+  el.continueSession.textContent = "Resumindo…";
+  const draft = el.input.value;
+  try {
+    const next = await api.continueSession(state.sessionId);
+    await openSession(next.id);
+    el.input.value = draft;
+    autoResize();
+    el.input.focus();
+  } catch (error) {
+    toast(describeError(error));
+  } finally {
+    el.continueSession.disabled = false;
+    el.continueSession.textContent = "Continuar em nova conversa";
+  }
 }
 
 // ---------------------------------------------------------------- memory manager
@@ -765,6 +951,23 @@ el.input.addEventListener("input", autoResize);
 el.stop.addEventListener("click", () => state.streaming?.abort());
 el.newSession.addEventListener("click", newChat);
 document.querySelectorAll(".suggestion").forEach((button) => button.addEventListener("click", () => send(button.textContent)));
+
+el.continueSession.addEventListener("click", continueConversation);
+el.contextMeter.addEventListener("click", (event) => {
+  event.stopPropagation();
+  el.contextPanel.hidden = !el.contextPanel.hidden;
+  el.contextMeter.setAttribute("aria-expanded", String(!el.contextPanel.hidden));
+  if (!el.contextPanel.hidden) renderContextPanel();
+});
+document.addEventListener("click", (event) => {
+  if (!el.contextPanel.hidden && !el.contextPanel.contains(event.target)) {
+    el.contextPanel.hidden = true;
+    el.contextMeter.setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !el.contextPanel.hidden) el.contextPanel.hidden = true;
+});
 
 $("#open-sidebar").addEventListener("click", () => el.app.classList.add("sidebar-open"));
 $("#scrim").addEventListener("click", closeDrawers);

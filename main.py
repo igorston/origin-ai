@@ -19,6 +19,7 @@ from origin.api.errors import register_error_handlers
 from origin.api.routes import calibration, chat, health, memory, sessions, tools
 from origin.config import get_settings
 from origin.core import LLMEngine, make_chat_model
+from origin.core.context import ContextBudget, ContextManager, ConversationSummarizer
 from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
@@ -79,6 +80,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         apply=apply_thresholds,
         backup_dir=settings.memory_backup_dir,
     )
+    app.state.context = ContextManager(
+        ContextBudget.from_settings(settings),
+        ConversationSummarizer(
+            judge, settings.context_summary_max_tokens, RetryPolicy.from_settings(settings)
+        ),
+        base_tokens=engine.estimate_base_tokens(),  # measured exactly after warmup
+    )
     logger.info(
         "Origin Core Initialized (v%s) | model=%s | embeddings=%s | memories=%d | tools=%s",
         __version__,
@@ -95,10 +103,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Missing Ollama models: %s (run `ollama pull <model>`)", ", ".join(missing))
     await app.state.calibrator.bootstrap(probe=ollama.healthy)
 
+    async def warm_and_measure() -> None:
+        await warmup(settings, [engine.model, engine.router, judge], app.state.memory)
+        try:
+            app.state.context.base_tokens = await engine.measure_base_tokens()
+            logger.info(
+                "Context: window=%d tokens, fixed prompt=%d tokens",
+                app.state.context.budget.window,
+                app.state.context.base_tokens,
+            )
+            if problem := app.state.context.check_window():
+                logger.warning(problem)
+        except Exception:
+            logger.warning("Could not measure the fixed prompt; using an estimate", exc_info=True)
+
     warmup_task = None
     if settings.ollama_warmup and ollama.healthy:
-        clients = [engine.model, engine.router, judge]
-        warmup_task = asyncio.create_task(warmup(settings, clients, app.state.memory))
+        warmup_task = asyncio.create_task(warm_and_measure())
     yield
     if warmup_task:
         warmup_task.cancel()
