@@ -1,6 +1,8 @@
+import re
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,7 +17,7 @@ class Settings(BaseSettings):
     origin_log_level: str = "INFO"
     origin_locale: str = "en-US"
 
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:8b"
     ollama_embed_model: str = "bge-m3"
     ollama_temperature: float = 0.7
@@ -48,6 +50,14 @@ class Settings(BaseSettings):
     sqlite_path: str = "./data/origin.db"
     # Most recent stored messages sent to the model as context for a session.
     session_history_limit: int = 20
+
+    @field_validator("ollama_base_url")
+    @classmethod
+    def _prefer_ipv4_loopback(cls, url: str) -> str:
+        # Ollama listens on 127.0.0.1 only. "localhost" resolves to ::1 first, and on Windows
+        # every new connection then waits ~2s for the IPv6 attempt to fail (measured: first
+        # memory search 2.1s -> 75ms).
+        return re.sub(r"^(https?://)localhost(?=[:/]|$)", r"\g<1>127.0.0.1", url)
 
 
 @lru_cache

@@ -37,17 +37,17 @@ logger = logging.getLogger("origin")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory = VectorMemory.from_settings(settings)
     app.state.sessions = SessionStore(settings.sqlite_path)
+    judge = make_chat_model(settings, temperature=0)
     registry = (
         ToolRegistry.discover(
-            ToolContext(settings, app.state.memory, llm=make_chat_model(settings, temperature=0)),
+            ToolContext(settings, app.state.memory, llm=judge),
             disabled=settings.tools_disabled,
         )
         if settings.tools_enabled
         else ToolRegistry()
     )
-    app.state.engine = LLMEngine.from_settings(
-        settings, memory=app.state.memory, tools=registry.tools
-    )
+    engine = LLMEngine.from_settings(settings, memory=app.state.memory, tools=registry.tools)
+    app.state.engine = engine
     logger.info(
         "Origin Core Initialized (v%s) | model=%s | embeddings=%s | memories=%d | tools=%s",
         __version__,
@@ -63,9 +63,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     elif missing := [name for name, ok in ollama.models.items() if not ok]:
         logger.warning("Missing Ollama models: %s (run `ollama pull <model>`)", ", ".join(missing))
 
-    warmup_task = (
-        asyncio.create_task(warmup(settings)) if settings.ollama_warmup and ollama.healthy else None
-    )
+    warmup_task = None
+    if settings.ollama_warmup and ollama.healthy:
+        clients = [engine.model, engine.router, judge]
+        warmup_task = asyncio.create_task(warmup(settings, clients, app.state.memory))
     yield
     if warmup_task:
         warmup_task.cancel()

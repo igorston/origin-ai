@@ -1,6 +1,8 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+import time
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from itertools import chain
 from typing import Literal
 
@@ -28,6 +30,34 @@ logger = logging.getLogger(__name__)
 
 # How much of the previous exchange is prepended to the memory query for follow-ups.
 RECALL_CONTEXT_CHARS = 500
+
+
+class TurnTimings:
+    """Wall-clock time per phase of one agent turn, for latency diagnosis in the logs."""
+
+    def __init__(self) -> None:
+        self.start = time.perf_counter()
+        self.phases: dict[str, float] = {}
+        self.first_token_at: float | None = None
+
+    @contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.phases[name] = self.phases.get(name, 0.0) + time.perf_counter() - started
+
+    def first_token(self) -> None:
+        if self.first_token_at is None:
+            self.first_token_at = time.perf_counter() - self.start
+
+    def __str__(self) -> str:
+        parts = [f"{name}={seconds * 1000:.0f}ms" for name, seconds in self.phases.items()]
+        if self.first_token_at is not None:
+            parts.append(f"first_token={self.first_token_at * 1000:.0f}ms")
+        parts.append(f"total={(time.perf_counter() - self.start) * 1000:.0f}ms")
+        return " ".join(parts)
 
 
 def make_chat_model(settings: Settings, temperature: float | None = None) -> ChatOllama:
@@ -178,53 +208,65 @@ class LLMEngine:
         use_tools: bool = True,
     ) -> AsyncIterator[str | ToolCallRecord]:
         """Agent loop: yields text chunks as they stream and a record per executed tool call."""
+        timings = TurnTimings()
         bound, tools = self._bind_tools(use_tools)
-        messages = await self._build_messages(message, history, use_memory, bool(tools))
+        with timings.phase("context"):
+            messages = await self._build_messages(message, history, use_memory, bool(tools))
         executed: list[ToolCallRecord] = []
 
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
-            tool_messages, records = await execute_tool_calls(tool_calls, tools)
+            with timings.phase("tools"):
+                tool_messages, records = await execute_tool_calls(tool_calls, tools)
             messages.extend(remind_language(tool_messages, message))
             executed.extend(records)
             return records
 
-        first_iteration = 0
-        if tools and self.tool_routing:
-            # Small models stop calling tools once they start writing text, so for compound
-            # messages they answer the easy part and drop the rest. A dedicated routing turn,
-            # where answering is not allowed, makes them commit to every needed tool first.
-            system = f"{messages[0].content}\n\n{load_prompt('tool_routing')}"
-            router = self.router.bind_tools(list(tools.values()))
-            decision = await router.ainvoke([SystemMessage(system), *messages[1:]])
-            if decision.tool_calls:
-                messages.append(AIMessage("", tool_calls=decision.tool_calls))
-                for record in await run_tools(decision.tool_calls):
-                    yield record
-                first_iteration = 1
+        try:
+            first_iteration = 0
+            if tools and self.tool_routing:
+                # Small models stop calling tools once they start writing text, so for compound
+                # messages they answer the easy part and drop the rest. A dedicated routing
+                # turn, where answering is not allowed, makes them commit to every tool first.
+                system = f"{messages[0].content}\n\n{load_prompt('tool_routing')}"
+                router = self.router.bind_tools(list(tools.values()))
+                with timings.phase("routing"):
+                    decision = await router.ainvoke([SystemMessage(system), *messages[1:]])
+                if decision.tool_calls:
+                    messages.append(AIMessage("", tool_calls=decision.tool_calls))
+                    for record in await run_tools(decision.tool_calls):
+                        yield record
+                    first_iteration = 1
 
-        for iteration in range(first_iteration, self.max_tool_iterations + 1):
-            # On the last iteration drop the tools so the model is forced to answer.
-            final = iteration == self.max_tool_iterations
-            model = self.model if final else bound
-            response = None
-            async for chunk in model.astream(messages):
-                response = chunk if response is None else response + chunk
-                if chunk.text:
-                    yield chunk.text
+            for iteration in range(first_iteration, self.max_tool_iterations + 1):
+                # On the last iteration drop the tools so the model is forced to answer.
+                final = iteration == self.max_tool_iterations
+                model = self.model if final else bound
+                response = None
+                async for chunk in model.astream(messages):
+                    response = chunk if response is None else response + chunk
+                    if chunk.text:
+                        timings.first_token()
+                        yield chunk.text
 
-            tool_calls = getattr(response, "tool_calls", None)
-            if tool_calls and tools and not final:
-                messages.append(response)
-                for record in await run_tools(tool_calls):
-                    yield record
-                continue
+                tool_calls = getattr(response, "tool_calls", None)
+                if tool_calls and tools and not final:
+                    messages.append(response)
+                    for record in await run_tools(tool_calls):
+                        yield record
+                    continue
 
-            if tool_calls:
-                logger.warning("Tool iteration limit reached; ignoring %d call(s)", len(tool_calls))
-            if response is not None and tools:
-                for record in await self._verify_claims(tools, messages, response, executed):
-                    yield record
-            return
+                if tool_calls:
+                    logger.warning(
+                        "Tool iteration limit reached; ignoring %d call(s)", len(tool_calls)
+                    )
+                if response is not None and tools:
+                    with timings.phase("claim_check"):
+                        records = await self._verify_claims(tools, messages, response, executed)
+                    for record in records:
+                        yield record
+                return
+        finally:
+            logger.info("Turn timings: %s | tools=%s", timings, [r.name for r in executed])
 
     async def _verify_claims(
         self,
