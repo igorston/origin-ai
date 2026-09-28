@@ -665,3 +665,20 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: 
 .login-logo img { height: 28px; }
 .field-label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .field-label .field { width: 100%; }
+
+/* ------------------------------------------------------------ internet switch */
+
+.web-toggle {
+  height: 42px;
+  width: 42px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 18px;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.web-toggle:hover { border-color: var(--accent); opacity: 0.8; }
+.web-toggle.on { filter: none; opacity: 1; border-color: var(--accent); background: var(--accent-soft); }

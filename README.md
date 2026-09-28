@@ -27,60 +27,186 @@ Seus dados, seus modelos, sua máquina. O **Origin** é um núcleo de IA que rod
 - 🧪 **Experimentação** — troque modelos, prompts e estratégias de memória sem reescrever o core.
 - 🏷️ **White label** — distribua com o seu nome, logo, cores, idioma e persona, sem mexer no código ([guia](docs/white-label.md)).
 
-## Pré-requisitos
-
-| Requisito | Versão | Observação |
-|-----------|--------|------------|
-| [Python](https://www.python.org/downloads/) | 3.11+ | |
-| [Ollama](https://ollama.com/download) | latest | Servidor de LLM local |
-| [Git](https://git-scm.com/) | 2.40+ | |
-| RAM | 8 GB+ | 16 GB+ recomendado para modelos 7B–8B |
-| GPU (opcional) | — | NVIDIA (CUDA) / Apple Silicon (Metal) acelera a inferência |
-
 ## Quickstart
 
-**Instalação guiada** (cria o ambiente, o `.env` e baixa os modelos):
+Se você já tem Python 3.11+, Git e [Ollama](https://ollama.com/download) instalados:
 
 ```bash
 git clone https://github.com/igorston/origin-ai.git && cd origin-ai
 sh scripts/install.sh                                          # Linux / macOS
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # Windows
-python main.py                                                 # ou .venv\Scripts\python.exe main.py
+python main.py                                                 # Windows: .venv\Scripts\python.exe main.py
 ```
 
-**Docker** (Origin + Ollama; a primeira tela baixa os modelos):
+Abra **http://127.0.0.1:8000**. O passo a passo completo, para cada sistema, está no [manual de instalação](#manual-de-instalação).
+
+## Manual de instalação
+
+### 1. Antes de começar: o seu computador
+
+O Origin roda os modelos de IA **na sua máquina**, então o hardware define o que funciona bem:
+
+| | Mínimo | Recomendado |
+|---|---|---|
+| **Sistema** | Windows 10/11, Linux (x86-64 ou ARM64), macOS 12+ | |
+| **Memória (RAM)** | 8 GB | 16 GB ou mais |
+| **Disco livre** | 10 GB (≈ 6 GB de modelos + dependências) | 20 GB |
+| **GPU** | Opcional: sem GPU funciona, mas as respostas levam de segundos a minutos | NVIDIA com 8 GB de VRAM ou mais, ou Mac com Apple Silicon (M1 ou superior) |
+| **Internet** | Só na instalação, para baixar dependências e modelos. Depois o Origin funciona offline; o acesso à web pelo agente é opcional | |
+
+Com os modelos padrão (`qwen3:8b` + `bge-m3`):
+
+| VRAM | O que esperar |
+|---|---|
+| 6 GB | Troque o modelo de chat por `qwen3:4b` (`OLLAMA_MODEL=qwen3:4b` no `.env`) |
+| 8 GB | Funciona bem. A janela de contexto é calculada sozinha (≈ 6.000 tokens numa RTX 4070 de 8 GB) |
+| 12 GB ou mais | Janelas maiores; o `qwen3:14b` também cabe |
+| Sem GPU / Apple Silicon | Funciona na CPU ou via Metal. Numa CPU, espere de 3 a 8 palavras por segundo |
+
+### 2. Instalação no Windows
+
+**2.1. Instale os programas necessários.** Abra o **PowerShell** (menu Iniciar → "PowerShell") e rode:
+
+```powershell
+winget install -e --id Python.Python.3.12
+winget install -e --id Git.Git
+winget install -e --id Ollama.Ollama
+```
+
+Sem o `winget`, baixe pelos sites: [Python](https://www.python.org/downloads/) (na instalação, **marque "Add python.exe to PATH"**), [Git](https://git-scm.com/download/win) e [Ollama](https://ollama.com/download/windows).
+
+Para GPUs NVIDIA, mantenha o [driver](https://www.nvidia.com/Download/index.aspx) atualizado. O Ollama já traz o que precisa do CUDA.
+
+**2.2. Feche e abra o PowerShell de novo** (para ele enxergar os programas novos) e confira:
+
+```powershell
+python --version    # Python 3.11 ou superior
+git --version
+ollama --version
+```
+
+> Se `python` abrir a Microsoft Store ou não for encontrado, o atalho do Windows está na frente. Desative-o em **Configurações → Aplicativos → Configurações avançadas de aplicativos → Aliases de execução de aplicativo** (desligue os dois "Instalador de aplicativo: python"), ou reinstale o Python marcando "Add to PATH".
+
+**2.3. Baixe o Origin e instale:**
+
+```powershell
+cd $HOME
+git clone https://github.com/igorston/origin-ai.git
+cd origin-ai
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+O instalador cria o ambiente Python (`.venv`), instala as dependências, cria o arquivo de configuração `.env` e baixa os modelos (≈ 6 GB; pode demorar). Para baixar os modelos depois, use `-SkipModels`; a primeira tela do Origin os baixa.
+
+**2.4. Inicie:**
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+Quando aparecer `Application startup complete`, abra **http://127.0.0.1:8000** no navegador. Para parar, use **Ctrl+C** no PowerShell. Para iniciar de novo depois:
+
+```powershell
+cd $HOME\origin-ai
+.\.venv\Scripts\python.exe main.py
+```
+
+### 3. Instalação no Linux (Ubuntu / Debian)
 
 ```bash
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip git curl
+curl -fsSL https://ollama.com/install.sh | sh     # instala e inicia o Ollama como serviço
+```
+
+Em outras distribuições, instale os mesmos pacotes pelo gerenciador delas (`dnf`, `pacman`…). Com GPU NVIDIA, instale o driver proprietário (`sudo ubuntu-drivers install` no Ubuntu) e reinicie. Confira com `nvidia-smi`.
+
+```bash
+git clone https://github.com/igorston/origin-ai.git && cd origin-ai
+sh scripts/install.sh
+.venv/bin/python main.py
+```
+
+Abra **http://127.0.0.1:8000**.
+
+### 4. Instalação no macOS
+
+Com o [Homebrew](https://brew.sh):
+
+```bash
+brew install python git ollama
+brew services start ollama          # ou abra o app Ollama, baixado de ollama.com
+git clone https://github.com/igorston/origin-ai.git && cd origin-ai
+sh scripts/install.sh
+.venv/bin/python main.py
+```
+
+Nos Macs com Apple Silicon, o Ollama usa a GPU (Metal) sozinho. Abra **http://127.0.0.1:8000**.
+
+### 5. Instalação com Docker (qualquer sistema)
+
+Útil para uma máquina dedicada ou para não instalar Python. Instale o [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) ou o Docker Engine (Linux) e rode:
+
+```bash
+git clone https://github.com/igorston/origin-ai.git && cd origin-ai
 docker compose up -d                                                   # CPU
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # GPU NVIDIA
 ```
 
-**Manual:**
+Abra **http://127.0.0.1:8000**: a primeira tela baixa os modelos para dentro do volume do Ollama. Os dados ficam em volumes do Docker. Detalhes, backup e GPU estão em [docs/deployment.md](docs/deployment.md#docker-compose).
+
+### 6. Primeiro uso
+
+1. **Configuração inicial:** se algum modelo faltar, uma tela abre sozinha com o botão **Baixar modelos** e o progresso de cada um.
+2. **Idioma:** em **Configurações → Geral → Idioma da interface**. As respostas seguem o idioma em que você escreve.
+3. **Memória:** diga "lembra que…" ("lembra que meu cachorro se chama Thor") e o Origin guarda o fato. Veja e edite tudo em **🧠 Memória**.
+4. **Internet (opcional):** o botão **🌐** ao lado da caixa de mensagem, ou **Configurações → Acesso à internet**, deixa o agente pesquisar na web e ler páginas. Vem **desligado**: até você ligar, nada sai da sua máquina.
+5. **Contexto:** o medidor no canto superior direito mostra quanto da janela do modelo a conversa usa. As mensagens antigas são resumidas sozinhas.
+
+### 7. Configurações mais usadas (`.env`)
+
+O arquivo `.env`, criado pelo instalador na pasta do Origin, reúne as configurações; os comentários em [`.env.example`](.env.example) explicam cada uma. Depois de editar, reinicie o Origin (Ctrl+C e inicie de novo).
+
+| Configuração | Para quê |
+|---|---|
+| `OLLAMA_MODEL=qwen3:8b` | Modelo de chat (baixe antes com `ollama pull <modelo>`) |
+| `ORIGIN_LOCALE=pt-BR` | Idioma padrão da interface |
+| `ORIGIN_PORT=8000` | Porta, se a 8000 estiver ocupada |
+| `WEB_ACCESS=true` | `false` remove o acesso à internet do agente por completo |
+| `WEB_SEARCH_PROVIDER=duckduckgo` | Ou `searxng` (com `WEB_SEARCH_URL`) ou `brave` (com `WEB_SEARCH_API_KEY`) |
+| `ORIGIN_AUTH=off` | `password` liga o login para várias pessoas (veja [implantação](docs/deployment.md)) |
+| `ORIGIN_BRAND_PATH` | Sua marca: nome, logo, cores e persona (veja [white label](docs/white-label.md)) |
+
+### 8. Atualizar e desinstalar
 
 ```bash
-# 1. Clone
-git clone https://github.com/igorston/origin-ai.git
 cd origin-ai
-
-# 2. Ambiente virtual
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-# 3. Dependências
-pip install -e ".[dev]"
-
-# 4. Modelos locais
-ollama pull qwen3:8b               # LLM de chat (com tool calling)
-ollama pull bge-m3                 # embeddings multilíngues (memória)
-
-# 5. Configuração
-cp .env.example .env
-
-# 6. Execute
-python main.py
+git pull
+pip install -e .                 # Windows: .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-Abra **http://127.0.0.1:8000** no navegador para usar a interface web. Se faltar algum modelo, a tela de **configuração inicial** o baixa com barra de progresso. Para servir a outras pessoas (login, HTTPS, Docker), veja [docs/deployment.md](docs/deployment.md). A API continua disponível no mesmo endereço, com documentação interativa em `/docs` e healthcheck em `/health`.
+As migrações do banco rodam sozinhas. Para guardar uma cópia dos seus dados, copie a pasta `data/`.
+
+**Desinstalar:** apague a pasta `origin-ai` (os seus dados estão em `origin-ai/data`). Os modelos ficam no Ollama; remova com `ollama rm qwen3:8b` e `ollama rm bge-m3`, ou desinstale o Ollama.
+
+### 9. Solução de problemas
+
+| Sintoma | O que fazer |
+|---|---|
+| Indicador **degradado** / "Ollama inacessível" | O Ollama não está rodando. Windows/macOS: abra o app Ollama. Linux: `sudo systemctl start ollama`. Confira com `ollama list` |
+| "Modelo ausente" | Use o botão **Baixar modelos** da configuração inicial, ou `ollama pull qwen3:8b` e `ollama pull bge-m3` |
+| A primeira resposta demora ~15 s | Normal: o modelo está sendo carregado na memória. As seguintes são rápidas. O indicador 🟡 **carregando** mostra isso |
+| Toda resposta é lenta (vários segundos antes de começar) | Veja o log: "Chat and embedding models do not fit in memory together" indica que a GPU não comporta os dois modelos. Use um modelo menor (`OLLAMA_MODEL=qwen3:4b`) ou reduza `OLLAMA_NUM_CTX` |
+| `Address already in use` / porta ocupada | Outro programa usa a porta 8000: defina `ORIGIN_PORT=8001` no `.env` |
+| Windows: "a execução de scripts foi desabilitada" | Rode o instalador exatamente como no passo 2.3 (com `-ExecutionPolicy Bypass`) |
+| Windows: `python` abre a Microsoft Store | Veja a nota do passo 2.2 |
+| A pesquisa na web falha ("Search failed") | O DuckDuckGo às vezes bloqueia muitas buscas seguidas. Espere alguns minutos, ou use uma instância própria do [SearXNG](https://docs.searxng.org/) (`WEB_SEARCH_PROVIDER=searxng`, `WEB_SEARCH_URL=http://…`) |
+| A memória deixou de encontrar fatos depois de trocar de modelo | **Configurações → Memória → Reindexar**, depois **Calibrar** |
+
+Não resolveu? Abra uma [issue](https://github.com/igorston/origin-ai/issues) com o sistema, a GPU e as últimas linhas do log do terminal.
+
+## Usando o Origin
+
+A interface fica em http://127.0.0.1:8000 e a API no mesmo endereço, com documentação interativa em `/docs` e healthcheck em `/health`. Para servir a outras pessoas (login, HTTPS, Docker), veja [docs/deployment.md](docs/deployment.md).
 
 ### Interface web
 
@@ -279,6 +405,26 @@ Com os modelos atuais, a calibração automática reproduz os valores ajustados 
 **Perguntas não salvam.** A tool `remember` declara `not_for_questions` nos metadados. Se a mensagem é só uma pergunta ("Onde eu moro?", "O que eu levo de presente pra ela?") e não tem um pedido explícito de salvar ("Você pode anotar que...?"), o agente descarta a chamada. Regras no prompt não bastavam: o modelo às vezes salvava "A capital da França é Paris." ou um plano tirado do histórico. Qualquer tool pode usar o mesmo mecanismo. Para esquecer algo de propósito ("esquece aquilo da alergia"), existe a tool `forget`, que apaga de verdade.
 
 > O modelo de embeddings padrão é o `bge-m3` porque é multilíngue. Em testes com textos em português, o `nomic-embed-text` não separava fatos relevantes de irrelevantes. Se trocar de modelo, recalibre o `MEMORY_MIN_SCORE` e recrie a coleção, porque vetores de modelos diferentes não são compatíveis.
+
+### Acesso à internet
+
+Com o **🌐** ligado (ou `"use_web": true` na API), o agente ganha duas tools:
+
+- **`web_search`:** pesquisa na web e recebe títulos, endereços e trechos dos resultados.
+- **`fetch_url`:** lê uma página e recebe o texto dela, limpo e truncado em `WEB_FETCH_MAX_CHARS`.
+
+O próprio agente decide quando pesquisar: para cotações, clima, notícias, placares, versões e tudo o que muda com o tempo, ou quando você pede ("pesquise…"). Para conhecimento geral, contas e fatos seus, ele não pesquisa.
+
+- **Desligado por padrão:** cada pessoa liga o acesso no próprio navegador. `WEB_ACCESS=false` remove as tools do servidor.
+- **Dados que mudam:** uma pergunta sobre cotação, clima, notícias ou placar **sempre** gera uma pesquisa. O modelo de 8B, perguntado sobre "a cotação do dólar hoje", chamava a tool de data e inventava "R$ 5,20". Com a proteção, ele respondeu R$ 5,22, com a fonte.
+- **Sem internet, sem invenção:** com o acesso desligado, uma pergunta sobre cotação, clima ou placar recebe "não consigo consultar agora" e a sugestão de ligar o 🌐. Antes, o modelo às vezes inventava o valor; em 6 perguntas desse tipo, depois da mudança, nenhuma resposta trouxe número inventado.
+- **Fontes:** o modelo tende a escrever "[1]" sem o endereço. O Origin acrescenta a lista de **Fontes** com os links citados.
+- **Endereços internos são bloqueados:** o agente não lê `localhost`, redes privadas (`192.168.x`, `10.x`), o Ollama local nem endpoints de metadados de nuvem. Cada redirecionamento é conferido de novo. `WEB_ALLOW_PRIVATE=true` libera o acesso a intranets.
+- **Conteúdo da web não é instrução:** o que vem da web chega ao modelo marcado como não confiável, para ser usado como informação e citado.
+- **Limites:** só páginas de texto, até 2 MB, com timeout (`WEB_TIMEOUT`).
+- **Provedores de busca:** DuckDuckGo (padrão, sem chave), [SearXNG](https://docs.searxng.org/) próprio (`WEB_SEARCH_PROVIDER=searxng`, `WEB_SEARCH_URL`) ou Brave Search (`WEB_SEARCH_PROVIDER=brave`, `WEB_SEARCH_API_KEY`).
+
+`python scripts/eval_agent.py --web` liga a internet em **todos** os casos da avaliação, para confirmar que o agente não pesquisa quando não deve, e acrescenta o grupo `web`.
 
 ### Tools (agente)
 

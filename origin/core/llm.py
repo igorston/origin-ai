@@ -38,6 +38,7 @@ from origin.core.context import JSON_CHARS_PER_TOKEN, estimate_tokens
 from origin.core.language import LANGUAGE_NAMES, detect_language, reply_instruction
 from origin.core.script_guard import ScriptGuard, guard_needed
 from origin.core.writer import StoryWriter, writing_task
+from origin.integrations.web import needs_live_data, sources_note
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
 from origin.retry import (
@@ -198,12 +199,18 @@ class LLMEngine:
         return clone
 
     def _bind_tools(
-        self, use_tools: bool
+        self, use_tools: bool, use_web: bool = False
     ) -> tuple[Runnable[LanguageModelInput, BaseMessage], dict[str, BaseTool]]:
-        if not (use_tools and self.tools):
+        # Network tools (web search, reading pages) only when the request asks for them.
+        tools = {
+            name: tool
+            for name, tool in self.tools.items()
+            if use_web or not (tool.metadata or {}).get("network")
+        }
+        if not (use_tools and tools):
             return self.model, {}
         try:
-            return self.model.bind_tools(list(self.tools.values())), self.tools
+            return self.model.bind_tools(list(tools.values())), tools
         except NotImplementedError:
             logger.warning("Model %s does not support tool calling", self.model_name)
             return self.model, {}
@@ -272,6 +279,7 @@ class LLMEngine:
         use_memory: bool = True,
         use_tools: bool = True,
         summary: str = "",
+        use_web: bool = False,
     ) -> AsyncIterator[str | ToolCallRecord | TurnUsage]:
         """Agent loop: yields text chunks as they stream, a record per executed tool call,
         and finally the token usage of the answer (when the model reports it)."""
@@ -302,12 +310,18 @@ class LLMEngine:
             yield TurnUsage(input_tokens=0, output_tokens=writer.output_tokens)
             return
 
-        bound, tools = self._bind_tools(use_tools)
+        bound, tools = self._bind_tools(use_tools, use_web)
         with timings.phase("context"):
             messages = await self._build_messages(
                 message, history, use_memory, bool(tools), summary
             )
         executed: list[ToolCallRecord] = []
+        if needs_live_data(message) and "web_search" not in tools:
+            # Asked for live data without internet, the model sometimes made a value up.
+            offline = load_prompt("offline_live_data")
+            if any((t.metadata or {}).get("network") for t in self.tools.values()):
+                offline += " " + load_prompt("offline_live_data_hint")
+            messages[-1].content += f"\n\n[{offline}]"
 
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
             with timings.phase("tools"):
@@ -335,6 +349,15 @@ class LLMEngine:
                     if call["name"] not in tools
                     or not blocked_for_question(tools[call["name"]], message)
                 ]
+                if (
+                    "web_search" in tools
+                    and needs_live_data(message)
+                    and not any(call["name"] in ("web_search", "fetch_url") for call in calls)
+                ):
+                    # Live data answered from memory is invented data (see web.LIVE_DATA).
+                    calls.append(
+                        {"name": "web_search", "args": {"query": message}, "id": "live-data"}
+                    )
                 if calls:
                     messages.append(AIMessage("", tool_calls=calls))
                     for record in await run_tools(calls):
@@ -388,6 +411,10 @@ class LLMEngine:
                     logger.warning(
                         "Tool iteration limit reached; ignoring %d call(s)", len(tool_calls)
                     )
+                if response is not None and executed:
+                    note = sources_note(response.text, executed, self.language_of(message))
+                    if note:
+                        yield note
                 if response is not None and tools:
                     with timings.phase("claim_check"):
                         records = await self._verify_claims(
@@ -462,11 +489,12 @@ class LLMEngine:
         use_memory: bool = True,
         use_tools: bool = True,
         summary: str = "",
+        use_web: bool = False,
     ) -> ChatResult:
         text: list[str] = []
         tool_calls: list[ToolCallRecord] = []
         usage = None
-        async for event in self.events(message, history, use_memory, use_tools, summary):
+        async for event in self.events(message, history, use_memory, use_tools, summary, use_web):
             if isinstance(event, str):
                 text.append(event)
             elif isinstance(event, TurnUsage):
@@ -482,8 +510,9 @@ class LLMEngine:
         use_memory: bool = True,
         use_tools: bool = True,
         summary: str = "",
+        use_web: bool = False,
     ) -> AsyncIterator[str]:
-        async for event in self.events(message, history, use_memory, use_tools, summary):
+        async for event in self.events(message, history, use_memory, use_tools, summary, use_web):
             if isinstance(event, str):
                 yield event
 

@@ -71,6 +71,8 @@ No Docker: `docker compose exec origin python -m origin.auth add-user maria --ad
 
 A chave que assina os cookies é gerada e guardada em `secret.key`, ao lado do banco. Para fixá-la (por exemplo, com várias réplicas), defina `ORIGIN_SECRET_KEY`.
 
+Sobre a internet: o acesso do agente à web (`web_search`, `fetch_url`) fica disponível, mas cada usuário precisa ligá-lo (🌐). Para proibi-lo no servidor, defina `WEB_ACCESS=false`. Mantenha `WEB_ALLOW_PRIVATE=false`, que é o padrão; com ele, os usuários não conseguem fazer o agente ler endereços da rede interna do servidor. Para buscas sem depender de terceiros, use uma instância própria do [SearXNG](https://docs.searxng.org/) (`WEB_SEARCH_PROVIDER=searxng`).
+
 ### 2. Coloque HTTPS na frente
 
 O Origin não faz TLS. Use um proxy reverso. Com o [Caddy](https://caddyserver.com), que emite o certificado sozinho:

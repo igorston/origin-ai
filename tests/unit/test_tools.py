@@ -23,7 +23,15 @@ def tools_for(memory: VectorMemory | None = None, llm: object = None, **settings
     return ToolRegistry.discover(ToolContext(Settings(**settings), memory, llm=llm)).tools
 
 
-BUILTIN_TOOLS = {"remember", "forget", "get_current_datetime", "days_until", "date_offset"}
+BUILTIN_TOOLS = {
+    "remember",
+    "forget",
+    "get_current_datetime",
+    "days_until",
+    "date_offset",
+    "web_search",
+    "fetch_url",
+}
 
 
 def test_discover_loads_builtin_plugins(memory: VectorMemory) -> None:

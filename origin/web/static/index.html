@@ -63,6 +63,7 @@
           <button class="button primary" id="continue-session" type="button" hidden data-i18n="continue.button"></button>
         </div>
         <form class="composer" id="composer">
+          <button class="web-toggle" id="web-toggle" type="button" hidden aria-pressed="false">🌐</button>
           <textarea id="input" rows="1" data-i18n-attr="title:chat.input_hint" autocomplete="off"></textarea>
           <button class="button primary" id="send" type="submit" data-i18n="chat.send"></button>
           <button class="button danger" id="stop" type="button" hidden data-i18n="chat.stop"></button>
@@ -141,6 +142,13 @@
           <span>
             <strong data-i18n="settings.use_tools"></strong>
             <span class="muted small" data-i18n="settings.use_tools_hint"></span>
+          </span>
+        </label>
+        <label class="setting" id="web-setting" hidden>
+          <input type="checkbox" id="use-web" />
+          <span>
+            <strong data-i18n="settings.use_web"></strong>
+            <span class="muted small" id="use-web-hint"></span>
           </span>
         </label>
         <label class="setting select-setting">

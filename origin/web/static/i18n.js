@@ -18,6 +18,7 @@ export const languages = boot.languages;
 export const version = boot.version;
 /** Signed-in user ({username, is_admin}) with ORIGIN_AUTH=password; null otherwise. */
 export const user = boot.user;
+export const web = boot.web || { available: false };
 const messages = boot.messages[locale] || {};
 const fallback = boot.messages.en || {};
 

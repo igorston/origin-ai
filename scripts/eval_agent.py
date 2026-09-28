@@ -104,6 +104,18 @@ def called(*names: str) -> Check:
     return lambda r, _: all(n in {c.name for c in r.tool_calls} for n in names)
 
 
+def not_called(*names: str) -> Check:
+    return lambda r, _: not any(c.name in names for c in r.tool_calls)
+
+
+def cites_url() -> Check:
+    return matches(r"https?://|www\.")
+
+
+def tool_output(needle: str) -> Check:
+    return lambda r, _: any(needle in c.output for c in r.tool_calls)
+
+
 def no_tools() -> Check:
     return lambda r, _: not r.tool_calls
 
@@ -195,6 +207,35 @@ class Case:
     checks: list[Check]
     seed: list[str] = field(default_factory=list)
     history: list[tuple[str, str]] = field(default_factory=list)
+
+
+WEB = ("web_search", "fetch_url")
+# Only with --web (they need the internet); --web also turns internet access on for every
+# other case, to catch the agent searching when it should not.
+WEB_CASES = [
+    Case(
+        "web",
+        "Qual é a versão estável mais recente do Python?",
+        [called("web_search"), cites_url()],
+    ),
+    Case("web", "Qual é a cotação do dólar hoje?", [called("web_search")]),
+    Case(
+        "web", "Pesquise na internet quais são as novidades do Python 3.14.", [called("web_search")]
+    ),
+    Case(
+        "web",
+        "Resuma esta página em uma frase: https://www.python.org/about/",
+        [called("fetch_url")],
+    ),
+    Case("web", "Qual a capital da França?", [not_called(*WEB), says("Paris")]),
+    Case("web", "Explique o que é recursão em uma frase.", [not_called(*WEB)]),
+    Case("web", "Lembre que meu time favorito é o Sport.", [not_called(*WEB), remembered("Sport")]),
+    Case("web", "Onde eu moro?", [not_called(*WEB), says("Recife")], seed=["Moro em Recife."]),
+    # Not reachable, by design: the agent must not read local/private addresses.
+    Case(
+        "web", "Leia http://192.168.0.1/ e me diga o que tem lá.", [tool_output("private or local")]
+    ),
+]
 
 
 CASES = [
@@ -441,7 +482,9 @@ CASES = [
 ]
 
 
-async def run_case(case: Case, settings, embeddings) -> tuple[bool, float, ChatResult]:
+async def run_case(
+    case: Case, settings, embeddings, web: bool = False
+) -> tuple[bool, float, ChatResult]:
     client = chromadb.EphemeralClient(settings=ChromaSettings(anonymized_telemetry=False))
     memory = VectorMemory(embeddings, client, f"eval-{uuid4().hex}")
     if case.seed:
@@ -452,7 +495,7 @@ async def run_case(case: Case, settings, embeddings) -> tuple[bool, float, ChatR
 
     history = [ChatTurn(role=role, content=content) for role, content in case.history]
     start = time.perf_counter()
-    result = await engine.generate(case.message, history)
+    result = await engine.generate(case.message, history, use_web=web)
     elapsed = time.perf_counter() - start
 
     stored = memory._store.get()
@@ -480,7 +523,10 @@ async def main() -> None:
     parser.add_argument("--routing", choices=["true", "false"])
     parser.add_argument("--routing-temperature", type=float)
     parser.add_argument("--contextual-recall", choices=["true", "false"])
-    parser.add_argument("--only", choices=sorted({c.group for c in CASES}))
+    parser.add_argument("--only", choices=sorted({c.group for c in CASES + WEB_CASES}))
+    parser.add_argument(
+        "--web", action="store_true", help="internet access on for every case, plus the web group"
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -501,13 +547,14 @@ async def main() -> None:
     embeddings = OllamaEmbeddings(
         model=settings.ollama_embed_model, base_url=settings.ollama_base_url
     )
-    cases = [c for c in CASES if args.only in (None, c.group)]
+    pool = CASES + WEB_CASES if args.web else CASES
+    cases = [c for c in pool if args.only in (None, c.group)]
 
     print(
         f"model={settings.ollama_model} temperature={settings.ollama_temperature} "
         f"reasoning={settings.ollama_reasoning} routing={settings.agent_tool_routing} "
         f"routing_temperature={settings.agent_routing_temperature} "
-        f"contextual_recall={settings.memory_contextual_recall} runs={args.runs}\n"
+        f"contextual_recall={settings.memory_contextual_recall} web={args.web} runs={args.runs}\n"
     )
     await LLMEngine.from_settings(settings).generate("ok", use_memory=False, use_tools=False)
 
@@ -517,7 +564,7 @@ async def main() -> None:
         passes = 0
         for _ in range(args.runs):
             try:
-                ok, elapsed, result = await run_case(case, settings, embeddings)
+                ok, elapsed, result = await run_case(case, settings, embeddings, args.web)
             except Exception as exc:  # e.g. a transient Ollama runner crash: one failed run
                 ok, elapsed = False, 0.0
                 result = ChatResult(text=f"<{type(exc).__name__}: {str(exc)[:120]}>")

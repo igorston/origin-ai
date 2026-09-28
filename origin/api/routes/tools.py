@@ -10,11 +10,17 @@ class ToolInfo(BaseModel):
     name: str
     description: str
     args: dict
+    network: bool = False  # uses the internet (only with use_web)
 
 
 @router.get("", response_model=list[ToolInfo])
 async def list_tools(engine: Engine) -> list[ToolInfo]:
     return [
-        ToolInfo(name=tool.name, description=tool.description, args=tool.args)
+        ToolInfo(
+            name=tool.name,
+            description=tool.description,
+            args=tool.args,
+            network=bool((tool.metadata or {}).get("network")),
+        )
         for tool in engine.tools.values()
     ]

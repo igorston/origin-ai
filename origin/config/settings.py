@@ -72,6 +72,25 @@ class Settings(BaseSettings):
     memory_conflict_threshold: float = 0.55
 
     tools_enabled: bool = True
+    # Internet access (web_search, fetch_url). Available here, but each request still has
+    # to ask for it (use_web / "Acesso à internet" in the interface): nothing leaves the
+    # machine unless the user turns it on. false removes the tools altogether.
+    web_access: bool = True
+    # duckduckgo: no key. searxng: a (self-hosted) instance at WEB_SEARCH_URL.
+    # brave: the Brave Search API, key in WEB_SEARCH_API_KEY.
+    web_search_provider: Literal["duckduckgo", "searxng", "brave"] = "duckduckgo"
+    web_search_url: str | None = None
+    web_search_api_key: str | None = None
+    web_max_results: int = 5
+    # Characters of a page given to the model (~2.5 per token: 4000 ~ 1600 tokens).
+    web_fetch_max_chars: int = 4000
+    web_timeout: float = 10.0
+    # Let the agent read private/local addresses (intranets). Off: it cannot be made to
+    # read the local Ollama, the router or cloud metadata endpoints.
+    web_allow_private: bool = False
+    web_user_agent: str = (
+        "Mozilla/5.0 (compatible; OriginAssistant/0.1; +https://github.com/igorston/origin-ai)"
+    )
     tools_disabled: list[str] = []
     agent_max_tool_iterations: int = 5
     # Extra "decide tools first" turn; fixes compound questions on small models (~+0.4s).

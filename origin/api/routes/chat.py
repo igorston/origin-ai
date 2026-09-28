@@ -35,6 +35,8 @@ class ChatRequest(BaseModel):
     history: list[ChatTurn] = []
     use_memory: bool = True
     use_tools: bool = True
+    # Let the agent search the web and read pages (the tools must be enabled too).
+    use_web: bool = False
 
     @model_validator(mode="after")
     def _session_or_history(self) -> "ChatRequest":
@@ -264,7 +266,12 @@ async def chat(
 ) -> ChatResponse:
     turn = await prepare_turn(body, sessions, context, owner)
     result = await engine.generate(
-        body.message, turn.history, body.use_memory, body.use_tools, turn.summary
+        body.message,
+        turn.history,
+        body.use_memory,
+        body.use_tools,
+        turn.summary,
+        use_web=body.use_web,
     )
     after = await finish_turn(
         turn, body, sessions, context, result.text, result.tool_calls, result.usage
@@ -298,7 +305,12 @@ async def run_and_persist(
     finished = False
     try:
         async for event in engine.events(
-            body.message, turn.history, body.use_memory, body.use_tools, turn.summary
+            body.message,
+            turn.history,
+            body.use_memory,
+            body.use_tools,
+            turn.summary,
+            use_web=body.use_web,
         ):
             if isinstance(event, TurnUsage):
                 usage = event

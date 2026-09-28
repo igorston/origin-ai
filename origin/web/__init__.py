@@ -71,6 +71,13 @@ def render_index(settings: Settings, user: dict | None = None, page: str = "inde
         "languages": languages(),
         "messages": {name: catalog["web"] for name, catalog in catalogs().items()},
         "auth": settings.origin_auth,
+        # Internet tools available here (each viewer still turns them on).
+        "web": {
+            "available": settings.web_access and settings.tools_enabled,
+            "provider": {"duckduckgo": "DuckDuckGo", "searxng": "SearXNG", "brave": "Brave Search"}[
+                settings.web_search_provider
+            ],
+        },
         "user": user,
     }
     # Inside <script type="application/json">: "</" must not close the tag.

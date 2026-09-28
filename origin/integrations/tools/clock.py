@@ -52,6 +52,7 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         """Return the current local date, time, weekday and UTC offset.
 
         Use when the user asks about TODAY's date, the current time or today's weekday.
+        Only the date/time itself: not prices, weather or news "de hoje".
         For any other day ("ontem", "amanhã", "daqui a..."), use `date_offset` instead.
         """
         now = _now()

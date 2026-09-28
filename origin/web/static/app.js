@@ -1,6 +1,6 @@
 import { api, ApiError, pullModels, streamChat } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
-import { brand, formatDateTime, formatNumber, languages, locale, setLanguage, t, translatePage, user } from "./i18n.js";
+import { brand, formatDateTime, formatNumber, languages, locale, setLanguage, t, translatePage, user, web } from "./i18n.js";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -30,6 +30,8 @@ const el = {
   settingsDialog: $("#settings-dialog"),
   useMemory: $("#use-memory"),
   useTools: $("#use-tools"),
+  useWeb: $("#use-web"),
+  webToggle: $("#web-toggle"),
   toolList: $("#tool-list"),
   systemInfo: $("#system-info"),
   toast: $("#toast"),
@@ -347,6 +349,7 @@ async function send(message) {
       session_id: state.sessionId,
       use_memory: el.useMemory.checked,
       use_tools: el.useTools.checked,
+      use_web: web.available && el.useWeb.checked,
     };
     for await (const { event, data } of streamChat(body, state.streaming.signal)) {
       if (event === "token") {
@@ -753,6 +756,7 @@ async function refreshTools() {
       ...tools.map((tool) =>
         h("li", { class: "tool" },
           h("code", { class: "tool-name" }, tool.name),
+          tool.network ? h("span", { class: "badge", title: t("settings.use_web_hint", { provider: web.provider }) }, `🌐 ${t("settings.use_web")}`) : null,
           h("p", { class: "tool-description" }, tool.description.trim()),
           Object.keys(tool.args).length
             ? h("div", { class: "muted small" }, t("tools.args"), Object.keys(tool.args).join(", "))
@@ -784,8 +788,18 @@ function renderSettingsHint() {
     el.settingsHint.textContent = t("settings.hint_reindex");
     return;
   }
+  renderWebToggle();
   const off = [!el.useMemory.checked && t("settings.hint_memory"), !el.useTools.checked && t("settings.hint_tools")].filter(Boolean);
   el.settingsHint.textContent = off.length ? t("settings.hint_off", { list: off.join(t("settings.hint_and")) }) : "";
+}
+
+/** The 🌐 switch next to the message box mirrors "Acesso à internet" in Settings. */
+function renderWebToggle() {
+  const on = el.useWeb.checked && el.useTools.checked;
+  el.webToggle.classList.toggle("on", on);
+  el.webToggle.setAttribute("aria-pressed", String(on));
+  el.webToggle.title = on ? t("chat.web_on") : t("chat.web_off");
+  el.webToggle.setAttribute("aria-label", el.webToggle.title);
 }
 
 // ---------------------------------------------------------------- memory calibration
@@ -1167,7 +1181,16 @@ el.addMemory.querySelector(".optimize-toggle").addEventListener("change", (event
 setOptimize(optimizeEnabled());
 
 // Persist the preferences across reloads (a per-browser convenience only).
-for (const input of [el.useMemory, el.useTools]) {
+// Internet access: only offered when the server has it, off until the viewer turns it on.
+$("#web-setting").hidden = el.webToggle.hidden = !web.available;
+$("#use-web-hint").textContent = t("settings.use_web_hint", { provider: web.provider });
+el.webToggle.addEventListener("click", () => {
+  el.useWeb.checked = !el.useWeb.checked;
+  if (el.useWeb.checked) el.useTools.checked = true; // the web works through tools
+  for (const input of [el.useWeb, el.useTools]) input.dispatchEvent(new Event("change"));
+});
+
+for (const input of [el.useMemory, el.useTools, el.useWeb]) {
   try {
     const saved = localStorage.getItem(`origin:${input.id}`);
     if (saved !== null) input.checked = saved === "true";

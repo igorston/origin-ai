@@ -16,6 +16,12 @@ Primeira versão pública.
 - Histórias e poemas: um escritor dedicado planeja a história e escreve uma cena por vez, com título e capítulos, e remove repetições.
 - Proteção contra troca de alfabeto: trechos em chinês, japonês ou coreano são traduzidos no meio do streaming.
 
+### Internet
+- Acesso à internet opcional para o agente: `web_search` (DuckDuckGo, SearXNG ou Brave) e `fetch_url` (lê páginas). Fica desligado até o usuário ligar o 🌐.
+- Perguntas sobre dados que mudam (cotação, clima, notícias, placar) sempre geram uma pesquisa. Sem internet, o agente diz que não pode consultar em vez de inventar um valor.
+- As fontes citadas são listadas com os links.
+- Bloqueio de endereços locais e privados, conferido também a cada redirecionamento, e conteúdo da web marcado como não confiável.
+
 ### Contexto
 - Medidor de contexto em relação à janela real, com a reserva para a resposta marcada.
 - Janela automática, calculada pelo limite do modelo e pela VRAM (`OLLAMA_NUM_CTX=auto`).
