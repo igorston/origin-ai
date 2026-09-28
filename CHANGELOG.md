@@ -11,6 +11,7 @@ Primeira versão pública.
 - Tools plugáveis: data e hora, dias até uma data, datas relativas (com a conta feita em código), lembrar e esquecer.
 - Memória de longo prazo em Chroma (bge-m3):
   - deduplicação, substituição de fatos desatualizados e recuperação pelo contexto da conversa;
+  - a substituição reconhece mudanças ditas de outro jeito ("mudei de time, agora torço pro Náutico" substitui "meu time favorito é o Sport") e mantém o que é acréscimo ("também gosto de...");
   - gerenciador na interface, com curadoria por IA ao editar;
   - calibração e reindexação quando o modelo muda.
 - Histórias e poemas: um escritor dedicado planeja a história e escreve uma cena por vez, com título e capítulos, e remove repetições.
@@ -20,6 +21,8 @@ Primeira versão pública.
 - Acesso à internet opcional para o agente: `web_search` (DuckDuckGo, SearXNG ou Brave) e `fetch_url` (lê páginas). Fica desligado até o usuário ligar o 🌐.
 - Perguntas sobre dados que mudam (cotação, clima, notícias, placar) sempre geram uma pesquisa. Sem internet, o agente diz que não pode consultar em vez de inventar um valor.
 - As fontes citadas são listadas com os links.
+- Pedidos de explicação ("me explique a MP das Bets") leem a página do melhor resultado, pulando sites que bloqueiam robôs, e a resposta tem a extensão que o pedido pede, no idioma do usuário.
+- Leis, decisões judiciais e medidas do governo também geram uma pesquisa, em vez de uma resposta de memória.
 - Bloqueio de endereços locais e privados, conferido também a cada redirecionamento, e conteúdo da web marcado como não confiável.
 
 ### Contexto

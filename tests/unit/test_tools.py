@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from origin.config import Settings
@@ -10,6 +11,8 @@ from origin.core import LLMEngine
 from origin.integrations import ToolContext, ToolRegistry
 from origin.integrations.tools import clock
 from origin.memory import VectorMemory
+from origin.memory.curator import MemoryCurator
+from tests.fakes import ScriptedChatModel
 
 FIXED_NOW = datetime(2026, 9, 26, 18, 30, tzinfo=timezone(timedelta(hours=-3)))
 
@@ -165,3 +168,29 @@ def test_tools_endpoint_lists_engine_tools(
     by_name = {t["name"]: t for t in response.json()}
     assert set(by_name) == BUILTIN_TOOLS
     assert "target_date" in by_name["days_until"]["args"]
+
+
+@pytest.mark.parametrize(
+    ("reply", "replaces"),
+    [
+        ("NO", True),
+        ("A: football team | B: football team | NO", True),
+        ("A: son's name | B: daughter's name | YES", False),
+        ("I am not sure", False),
+    ],
+)
+async def test_conflict_verdict_is_the_last_answer(reply: str, replaces: bool) -> None:
+    curator = MemoryCurator(None, ScriptedChatModel(responses=[AIMessage(reply)]))
+    assert (
+        await curator.supersedes("Meu time favorito é o Sport.", "Meu time é o Náutico.")
+        is replaces
+    )
+
+
+async def test_an_addition_never_replaces() -> None:
+    judge = ScriptedChatModel(responses=[AIMessage("NO")])
+    curator = MemoryCurator(None, judge)
+    assert not await curator.supersedes(
+        "Gosto de pizza de calabresa.", "Agora também gosto de pizza de mussarela."
+    )
+    assert not judge.received  # decided without asking the model

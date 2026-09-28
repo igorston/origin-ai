@@ -38,7 +38,13 @@ from origin.core.context import JSON_CHARS_PER_TOKEN, estimate_tokens
 from origin.core.language import LANGUAGE_NAMES, detect_language, reply_instruction
 from origin.core.script_guard import ScriptGuard, guard_needed
 from origin.core.writer import StoryWriter, writing_task
-from origin.integrations.web import needs_live_data, sources_note
+from origin.integrations.web import (
+    READ_FAILED,
+    needs_live_data,
+    sources_note,
+    top_results,
+    wants_depth,
+)
 from origin.memory import MemoryHit, VectorMemory
 from origin.prompts import load_prompt
 from origin.retry import (
@@ -105,12 +111,17 @@ def make_chat_model(settings: Settings, temperature: float | None = None) -> Cha
     )
 
 
-def remind_language(tool_messages: list[ToolMessage], message: str) -> list[ToolMessage]:
+def remind_language(
+    tool_messages: list[ToolMessage],
+    message: str,
+    locale: str | None = None,
+    detailed: bool = False,
+) -> list[ToolMessage]:
     """Tool results are English and are the last thing the model reads before replying, which
     made small models answer in English. Append an instruction in the user's own language —
     quoting the user's message instead made the model parrot the quote back as its reply."""
     if tool_messages:
-        tool_messages[-1].content += f"\n\n{reply_instruction(message)}"
+        tool_messages[-1].content += f"\n\n{reply_instruction(message, locale, detailed)}"
     return tool_messages
 
 
@@ -326,7 +337,13 @@ class LLMEngine:
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
             with timings.phase("tools"):
                 tool_messages, records = await execute_tool_calls(tool_calls, tools, message)
-            messages.extend(remind_language(tool_messages, message))
+            # Web results feed explanations; actions and date lookups get a short reply.
+            detailed = any(
+                getattr(tools.get(r.name), "metadata", None)
+                and tools[r.name].metadata.get("network")
+                for r in records
+            )
+            messages.extend(remind_language(tool_messages, message, self.locale, detailed))
             executed.extend(records)
             return records
 
@@ -360,9 +377,27 @@ class LLMEngine:
                     )
                 if calls:
                     messages.append(AIMessage("", tool_calls=calls))
-                    for record in await run_tools(calls):
+                    records = await run_tools(calls)
+                    for record in records:
                         yield record
                     first_iteration = 1
+                    # An explanation needs more than search snippets: read the top result.
+                    searched = [r for r in records if r.name == "web_search"]
+                    if (
+                        searched
+                        and "fetch_url" in tools
+                        and wants_depth(message)
+                        and not any(r.name == "fetch_url" for r in records)
+                    ):
+                        # Sites that block automated clients (403) are skipped for the next.
+                        for n, url in enumerate(top_results(searched[-1].output)):
+                            depth = [{"name": "fetch_url", "args": {"url": url}, "id": f"depth{n}"}]
+                            messages.append(AIMessage("", tool_calls=depth))
+                            read = await run_tools(depth)
+                            for record in read:
+                                yield record
+                            if read and not read[0].output.startswith(READ_FAILED):
+                                break
 
             for iteration in range(first_iteration, self.max_tool_iterations + 1):
                 # On the last iteration drop the tools so the model is forced to answer.

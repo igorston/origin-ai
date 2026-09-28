@@ -38,6 +38,9 @@ UNTRUSTED = (
 )
 
 
+READ_FAILED = "Could not read"  # fetch_url output prefix when a page cannot be read
+
+
 class WebError(Exception):
     """A request the agent may not make, or that failed; the message goes to the model."""
 
@@ -217,6 +220,8 @@ class WebClient:
         ]
 
 
+RESULT_LINE = re.compile(r"^(\d+)\. .*\n\s+(https?://\S+)", re.M)
+
 # Data that changes by the hour: a model that answers these from memory invents them.
 # Asked for the dollar rate "hoje", qwen3:8b called the clock tool and replied
 # "R$ 5,20" — so with internet access on, these always get a search.
@@ -231,12 +236,44 @@ LIVE_DATA = re.compile(
 )
 
 
+# Requests for an explanation: search snippets (two lines each) are too thin to explain
+# "a MP das Bets", so the top result is read as well.
+EXPLAIN = re.compile(
+    r"\b(expli(que|ca|car|ca[çc][ãa]o)|entend(a|er|imento)|detalh\w*|resum\w*|"
+    r"como funciona|o que (muda|diz|prev[êe]|significa)|fale sobre|me fale|me conte sobre|"
+    r"explain|tell me about|how does|what does .* mean|expl[íi]came|cu[ée]ntame)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_depth(message: str) -> bool:
+    return bool(EXPLAIN.search(message))
+
+
+def top_results(search_output: str, limit: int = 3) -> list[str]:
+    """URLs of a web_search output, best first."""
+    return [url for _, url in RESULT_LINE.findall(search_output)][:limit]
+
+
+# Current affairs: laws, courts, government, elections. Without a search, "Me explique a
+# MP das Bets?" got a fluent, confident and entirely made-up "MP 1.202/2024".
+CURRENT_AFFAIRS = re.compile(
+    r"\b(MPs?|medidas? provis[óo]rias?|projetos? de lei|PLs? ?\d|PECs?|decretos?|"
+    r"nova lei|lei (n[ºo°.]?\s?)?\d|san[çc][ãa]o|sancionad[ao]|vetad[ao]|STF|STJ|TSE|"
+    r"supremo|congresso|senado|c[âa]mara dos deputados|elei[çc](ão|ões|ao|oes)|"
+    r"governo (federal|lula|do estado)|minist[ée]rio|reforma (tribut[áa]ria|da previd[êe]ncia|"
+    r"administrativa)|bill|executive order|supreme court|ley (n[º°.]?\s?)?\d)\b"
+)
+
+
 def needs_live_data(message: str) -> bool:
-    return bool(LIVE_DATA.search(message))
+    """Questions a model answers badly from memory: data that changes by the hour, and
+    current affairs. With internet access on they always get a search; with it off the
+    model is told it cannot check them."""
+    return bool(LIVE_DATA.search(message) or CURRENT_AFFAIRS.search(message))
 
 
 SOURCES_LABEL = {"Brazilian Portuguese": "Fontes", "Spanish": "Fuentes"}
-RESULT_LINE = re.compile(r"^(\d+)\. .*\n\s+(https?://\S+)", re.M)
 
 
 def sources_note(answer: str, records: list, language: str) -> str | None:
@@ -250,7 +287,7 @@ def sources_note(answer: str, records: list, language: str) -> str | None:
         return None
     urls: list[str] = []
     for record in used:
-        if record.name == "fetch_url":
+        if record.name == "fetch_url" and not record.output.startswith(READ_FAILED):
             urls += re.findall(r"^URL: (https?://\S+)", record.output, re.M)
     results = {int(n): url for record in used if record.name == "web_search"
                for n, url in RESULT_LINE.findall(record.output)}  # fmt: skip

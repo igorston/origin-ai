@@ -44,6 +44,11 @@ STOPWORDS = {
 
 LANGUAGE_NAMES = {"pt": "Portuguese", "en": "English", "es": "Spanish"}
 
+# "Agora também gosto de X" adds to what is known; the judge sometimes read it as a change.
+ADDITIVE = re.compile(r"\b(tamb[ée]m|also|too|as well|adem[áa]s)\b", re.IGNORECASE)
+# The judge names what each sentence is about before answering: "A: ... | B: ... | NO".
+VERDICT = re.compile(r"\b(YES|NO)\b")
+
 
 class CurationResult(BaseModel):
     saved: list[MemoryRecord] = []  # memories created or updated
@@ -195,19 +200,21 @@ class MemoryCurator:
         return [note]
 
     async def supersedes(self, old: str, new: str) -> bool:
-        if self.llm is None:
+        if self.llm is None or ADDITIVE.search(new):
             return False
         prompt = load_prompt("memory_conflict").format(old=old, new=new)
         try:
             reply = await call_with_retry(
                 lambda: self.llm.ainvoke(prompt), self.retry, "memory conflict check"
             )
-            answer = reply.text.strip().upper()
+            verdicts = VERDICT.findall(reply.text.upper())
         except Exception:
             logger.warning("Memory conflict check failed; keeping %r", old, exc_info=True)
             return False
+        # Naming both subjects first made qwen3:8b see that "torço pro Náutico" and "meu time
+        # favorito é o Sport" are the same thing, and "gosto de rock / de samba" are not.
         # The prompt asks whether both can be true at once: "NO" means the new fact replaces.
-        return answer.startswith("NO")
+        return bool(verdicts) and verdicts[-1] == "NO"
 
     # ------------------------------------------------------------ storage
 

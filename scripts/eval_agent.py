@@ -227,6 +227,11 @@ WEB_CASES = [
         "Resuma esta página em uma frase: https://www.python.org/about/",
         [called("fetch_url")],
     ),
+    Case(
+        "web",
+        "Me explique a MP das Bets?",
+        [called("web_search"), called("fetch_url"), portuguese(), matches(r"(?s).{600,}")],
+    ),
     Case("web", "Qual a capital da França?", [not_called(*WEB), says("Paris")]),
     Case("web", "Explique o que é recursão em uma frase.", [not_called(*WEB)]),
     Case("web", "Lembre que meu time favorito é o Sport.", [not_called(*WEB), remembered("Sport")]),

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import httpx
 from langchain_core.tools import BaseTool, tool
 
-from origin.integrations.web import UNTRUSTED, WebClient, WebError
+from origin.integrations.web import READ_FAILED, UNTRUSTED, WebClient, WebError
 
 if TYPE_CHECKING:
     from origin.integrations.registry import ToolContext
@@ -65,7 +65,7 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         try:
             final, title, text = await client.fetch(url)
         except (WebError, httpx.HTTPError) as exc:
-            return f"Could not read {url}: {exc}"
+            return f"{READ_FAILED} {url}: {exc}"
         limit = settings.web_fetch_max_chars
         cut = f"\n[... truncated: {len(text) - limit} more characters]" if len(text) > limit else ""
         return f"{UNTRUSTED}\nURL: {final}\nTitle: {title or '-'}\n\n{text[:limit]}{cut}"

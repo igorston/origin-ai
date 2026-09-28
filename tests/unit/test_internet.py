@@ -164,6 +164,11 @@ def test_sources_are_added_when_the_answer_names_no_url() -> None:
         ("Vai chover amanhã em Recife?", True),
         ("Quem ganhou o jogo do Flamengo ontem?", True),
         ("What's the weather in Lisbon?", True),
+        ("Me explique a MP das Bets?", True),
+        ("O que o STF decidiu sobre o marco temporal?", True),
+        ("Como fica a reforma tributária para autônomos?", True),
+        ("Explique o que é recursão em uma frase.", False),
+        ("Me explique o que é uma função lambda", False),
         ("Qual a capital da França?", False),
         ("Que dia é hoje?", False),
         ("Explique o que é uma API REST.", False),
@@ -235,3 +240,80 @@ async def test_without_internet_live_data_is_not_invented() -> None:
     assert "no internet access" in prompt and "🌐" in prompt
     await engine.generate("Qual a capital da França?", use_memory=False)
     assert "no internet access" not in model.received[-1][-1].content
+
+
+@pytest.mark.parametrize(
+    ("message", "deep"),
+    [
+        ("Me explique a MP das Bets?", True),
+        ("O que muda com a reforma tributária?", True),
+        ("Explain the new law", True),
+        ("Qual é a cotação do dólar hoje?", False),
+        ("Quem ganhou o jogo?", False),
+    ],
+)
+def test_explanation_requests(message: str, deep: bool) -> None:
+    assert web_module.wants_depth(message) is deep
+
+
+async def test_explanations_read_the_top_result_in_the_users_language() -> None:
+    pages: list[str] = []
+
+    @tool
+    async def web_search(query: str) -> str:
+        """Search the web."""
+        return SEARCH_OUTPUT
+
+    @tool
+    async def fetch_url(url: str) -> str:
+        """Read a page."""
+        pages.append(url)
+        if "python.org/downloads" in url:  # the top result blocks robots (403)
+            return f"Could not read {url}: {url} answered HTTP 403"
+        return f"[...]\nURL: {url}\nTitle: MP\n\nTexto completo da página."
+
+    for t in (web_search, fetch_url):
+        t.metadata = {"network": True}
+    router = ScriptedChatModel(
+        responses=[
+            AIMessage("", tool_calls=[{"name": "web_search", "args": {"query": "MP"}, "id": "1"}])
+        ]
+    )
+    model = ScriptedChatModel(responses=[AIMessage("A MP proíbe as apostas de quota fixa.")])
+    engine = LLMEngine(
+        model,
+        "sys",
+        "scripted",
+        tools={"web_search": web_search, "fetch_url": fetch_url},
+        tool_routing=True,
+        router=router,
+        locale="pt-BR",
+    )
+
+    await engine.generate("Me explique a MP das Bets?", use_memory=False, use_web=True)
+
+    # The top result refused (403): the next one was read instead.
+    assert pages == ["https://www.python.org/downloads/", "https://docs.python.org/3/"]
+    final_prompt = model.received[-1]
+    reminder = final_prompt[-1].content
+    assert "português do Brasil" in reminder and "uma ou duas frases" not in reminder
+
+
+async def test_actions_keep_the_short_reply_instruction() -> None:
+    router = ScriptedChatModel(
+        responses=[
+            AIMessage("", tool_calls=[{"name": "get_current_datetime", "args": {}, "id": "1"}])
+        ]
+    )
+    model = ScriptedChatModel(responses=[AIMessage("Hoje é segunda-feira.")])
+    engine = LLMEngine(
+        model,
+        "sys",
+        "scripted",
+        tools=web_tools([]),
+        tool_routing=True,
+        router=router,
+        locale="pt-BR",
+    )
+    await engine.generate("Que dia é hoje?", use_memory=False, use_web=True)
+    assert "uma ou duas frases diretas" in model.received[-1][-1].content
