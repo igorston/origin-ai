@@ -398,3 +398,21 @@ async def test_summarizer_records_pieces_in_preserved() -> None:
         ],
     )
     assert '"O Farol"; chapters: A Noite' in split_sections(summary)["PRESERVED"]
+
+
+def test_counted_replies_are_not_rescaled_by_a_noisy_calibration() -> None:
+    from origin.api.routes.chat import CountedTurn
+
+    manager = ContextManager(budget(window=8000), None, base_tokens=1300)
+    greeting = [ChatTurn(role="user", content="Oi!"), ChatTurn(role="assistant", content="Olá!")]
+    # The greeting's measurement included ~160 tokens of recalled memories: a tiny
+    # sample like this must not calibrate anything.
+    scale = manager.calibrate("", greeting, measured=1300 + 180)
+    assert scale == 1.0
+    story = [
+        *greeting,
+        CountedTurn("user", "Crie uma história", 10),
+        CountedTurn("assistant", "x", 3455),
+    ]
+    usage = manager.usage("", story, scale=2.0)  # even with a skewed scale
+    assert 3455 <= usage.history < 3455 + 50  # the story's own count is kept as is

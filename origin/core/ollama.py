@@ -10,6 +10,7 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
 from origin.config import Settings
+from origin.core.capacity import num_ctx
 from origin.memory import VectorMemory
 
 logger = logging.getLogger(__name__)
@@ -83,9 +84,10 @@ async def warmup(
         # reload a model (measured +4-5s per call with num_ctx 8192 on an 8 GB GPU).
         logger.warning(
             "Chat and embedding models do not fit in memory together (loaded: %s). "
-            "Lower OLLAMA_NUM_CTX (now %d) or use smaller models.",
+            'Lower OLLAMA_NUM_CTX (now %d), raise OLLAMA_VRAM_OVERHEAD_GB for "auto", '
+            "or use smaller models.",
             ", ".join(name for name, up in status.loaded.items() if up) or "none",
-            settings.ollama_num_ctx,
+            num_ctx(settings),
         )
 
 
@@ -94,7 +96,7 @@ async def _load_models(settings: Settings) -> None:
         # Same num_ctx as the chat clients, or the first real request reloads the model.
         (
             "/api/generate",
-            {"model": settings.ollama_model, "options": {"num_ctx": settings.ollama_num_ctx}},
+            {"model": settings.ollama_model, "options": {"num_ctx": num_ctx(settings)}},
         ),
         ("/api/embed", {"model": settings.ollama_embed_model, "input": "warmup"}),
     ]

@@ -27,6 +27,7 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
 from origin.config import Settings
+from origin.core.capacity import Capacity, num_ctx
 from origin.prompts import load_prompt
 from origin.retry import DEFAULT_POLICY, RetryPolicy, call_with_retry
 
@@ -44,6 +45,7 @@ SUMMARY_SHARE = 0.2
 # the estimate; dense text (codes, prices, IDs) can measure well above it.
 MIN_SCALE = 0.5
 MAX_SCALE = 2.0
+MIN_CALIBRATION_SAMPLE = 300  # estimated tokens
 
 State = Literal["ok", "warning", "critical", "closed"]
 
@@ -78,7 +80,7 @@ class ContextBudget(BaseModel):
     @classmethod
     def from_settings(cls, settings: Settings) -> "ContextBudget":
         return cls(
-            window=settings.context_window or settings.ollama_num_ctx,
+            window=settings.context_window or num_ctx(settings),
             reply_reserve=settings.context_reply_reserve,
             compact_at=settings.context_compact_at,
             compact_target=settings.context_compact_target,
@@ -116,6 +118,13 @@ class ContextUsage(BaseModel):
     compressions: int  # times the summary itself was condensed (lossy; limited)
     max_compressions: int
     summarized_messages: int
+    # Where the window size comes from (see origin/core/capacity.py), for the meter.
+    window_source: str = "config"
+    model: str = ""
+    model_limit: int | None = None  # context the model supports
+    vram_limit: int | None = None  # ~largest window that fits in VRAM
+    vram_total_gb: float | None = None
+    gpu: str | None = None
 
 
 class Compaction(BaseModel):
@@ -343,11 +352,18 @@ class Optimized:
 
 class ContextManager:
     def __init__(
-        self, budget: ContextBudget, summarizer: ConversationSummarizer | None, base_tokens: int
+        self,
+        budget: ContextBudget,
+        summarizer: ConversationSummarizer | None,
+        base_tokens: int,
+        capacity: Capacity | None = None,
+        model: str = "",
     ) -> None:
         self.budget = budget
         self.summarizer = summarizer
         self.base_tokens = base_tokens  # replaced by a measurement at warmup
+        self.capacity = capacity
+        self.model = model
 
     def usage(
         self,
@@ -365,7 +381,8 @@ class ContextManager:
         """`scale` corrects the text estimates (see `calibrate`)."""
         b = self.budget
         summary_tokens = round(estimate_tokens(summary) * scale) if summary else 0
-        history = round(self._history_tokens(turns) * scale)
+        counted, estimated = self._split_history(turns)
+        history = counted + round(estimated * scale)
         message_tokens = estimate_tokens(message) if message else 0
         memory = b.memory_reserve if message else 0
         estimated = self.base_tokens + summary_tokens + history + message_tokens + memory
@@ -396,6 +413,18 @@ class ContextManager:
             compressions=compressions,
             max_compressions=b.max_compressions,
             summarized_messages=summarized,
+            model=self.model,
+            **(
+                {
+                    "window_source": self.capacity.source,
+                    "model_limit": self.capacity.model_limit,
+                    "vram_limit": self.capacity.vram_limit,
+                    "vram_total_gb": self.capacity.vram_total_gb,
+                    "gpu": self.capacity.gpu,
+                }
+                if self.capacity
+                else {}
+            ),
         )
 
     async def carry_over(self, summary: str, turns: Sequence[Turn]) -> str:
@@ -435,16 +464,34 @@ class ContextManager:
     def _history_tokens(turns: Sequence[Turn]) -> int:
         return sum(getattr(t, "tokens", 0) or estimate_tokens(t.content) for t in turns)
 
+    @staticmethod
+    def _split_history(turns: Sequence[Turn]) -> tuple[int, int]:
+        """(tokens counted by the model, tokens estimated from text). Assistant replies
+        store the model's own count; user messages store an estimate."""
+        counted = estimated = 0
+        for turn in turns:
+            tokens = getattr(turn, "tokens", 0)
+            if turn.role == "assistant" and tokens:
+                counted += tokens
+            else:
+                estimated += tokens or estimate_tokens(turn.content)
+        return counted, estimated
+
     def calibrate(self, summary: str, turns: Sequence[Turn], measured: int | None) -> float:
         """Ratio between Ollama's measurement of the last turn (prompt + answer, i.e. about
         the base, the summary and every turn now stored) and our estimate of the same text.
         The estimate assumes ~2.5 chars/token: chat prose is often 1.5-2x lighter (without
         this the chat would compact far too early), while codes and numbers are heavier
         (without this a fact-heavy chat would overflow the reply reserve)."""
-        estimated = (estimate_tokens(summary) if summary else 0) + self._history_tokens(turns)
-        if not measured or estimated <= 0:
+        counted, estimated = self._split_history(turns)
+        estimated += estimate_tokens(summary) if summary else 0
+        # Only estimates are corrected, and only from a sample big enough: after a greeting
+        # the recalled memories in the measurement pushed the ratio to its 2x cap, which
+        # then doubled a 3455-token story on the meter (shown as ~7000).
+        if not measured or estimated < MIN_CALIBRATION_SAMPLE:
             return 1.0
-        return min(MAX_SCALE, max(MIN_SCALE, (measured - self.base_tokens) / estimated))
+        ratio = (measured - self.base_tokens - counted) / estimated
+        return min(MAX_SCALE, max(MIN_SCALE, ratio))
 
     async def optimize(
         self,

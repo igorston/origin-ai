@@ -23,12 +23,17 @@ class Settings(BaseSettings):
     ollama_temperature: float = 0.7
     # None = model default; False disables "thinking" on reasoning models (e.g. qwen3).
     ollama_reasoning: bool | None = False
-    # Context window in tokens. Without it Ollama silently used 4096 and cut the start of
-    # long prompts (system prompt included). Every chat client must use the same value, or
-    # Ollama reloads the model. The chat and embedding models must fit in VRAM together:
-    # on an 8 GB GPU, qwen3:8b + bge-m3 fit at 6144 (5.5 + 0.6 GB); at 8192 Ollama swapped
-    # them on every call (+4-5s each). The context manager keeps prompts within this.
-    ollama_num_ctx: int = 6144
+    # Context window in tokens, or "auto": the model's limit, capped by what fits in VRAM
+    # next to the embedding model (see origin/core/capacity.py; on an RTX 4070 8 GB with
+    # qwen3:8b + bge-m3 that is 6144 — at 7168 and 8192 Ollama swapped the two models on
+    # every call, +4-5 s each). Without a value Ollama used 4096 and silently cut the start
+    # of long prompts. Every chat client uses the same value, or Ollama reloads the model.
+    ollama_num_ctx: int | Literal["auto"] = "auto"
+    # "auto" without an NVIDIA GPU or without Ollama at startup: Ollama's own default.
+    ollama_num_ctx_fallback: int = 4096
+    # VRAM kept free beyond both model files and the KV cache (CUDA contexts, compute
+    # buffers, Ollama's reserve). Calibrated on the GPU above; raise it if models swap.
+    ollama_vram_overhead_gb: float = 1.15
     # Seconds Ollama keeps models loaded after the last request (-1 = forever).
     ollama_keep_alive: int = 1800
     # Preload models on startup so the first request does not pay the load time.

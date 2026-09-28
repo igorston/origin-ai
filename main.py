@@ -19,6 +19,7 @@ from origin.api.errors import register_error_handlers
 from origin.api.routes import calibration, chat, health, memory, sessions, tools
 from origin.config import get_settings
 from origin.core import LLMEngine, make_chat_model
+from origin.core.capacity import capacity_for
 from origin.core.context import ContextBudget, ContextManager, ConversationSummarizer
 from origin.core.ollama import check_ollama, warmup
 from origin.integrations import ToolContext, ToolRegistry
@@ -40,6 +41,11 @@ logger = logging.getLogger("origin")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Window size from the model's limit and the free VRAM (OLLAMA_NUM_CTX=auto), probed
+    # before any chat client is built: they all have to use the same value. Skipped with
+    # a fixed window and no warmup (tests), which is when nothing may touch Ollama.
+    probing = settings.ollama_num_ctx == "auto" or settings.ollama_warmup
+    capacity = await asyncio.to_thread(capacity_for, settings) if probing else None
     app.state.memory = VectorMemory.from_settings(settings)
     app.state.sessions = SessionStore(settings.sqlite_path)
     judge = make_chat_model(settings, temperature=0)
@@ -86,6 +92,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             judge, settings.context_summary_max_tokens, RetryPolicy.from_settings(settings)
         ),
         base_tokens=engine.estimate_base_tokens(),  # measured exactly after warmup
+        capacity=capacity,
+        model=settings.ollama_model,
     )
     logger.info(
         "Origin Core Initialized (v%s) | model=%s | embeddings=%s | memories=%d | tools=%s",

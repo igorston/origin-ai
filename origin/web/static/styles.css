@@ -316,7 +316,13 @@ a { color: var(--accent); }
   cursor: pointer;
 }
 .context-meter:hover { border-color: var(--accent); }
-.context-bar { width: 64px; height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.context-bar { position: relative; width: 64px; height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+/* The reply reserve at the end of the window: filling into it means "optimize next turn". */
+.context-reserve,
+.seg-reserve {
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 45%, transparent) 0 2px, transparent 2px 4px);
+}
+.context-reserve { position: absolute; top: 0; right: 0; height: 100%; }
 .context-fill { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--ok); transition: width 0.3s ease; }
 .context-label { font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
 .context-meter.warning .context-fill { background: var(--warn); }
@@ -341,6 +347,8 @@ a { color: var(--accent); }
 }
 .context-panel h3 { margin: 0 0 8px; font-size: 13px; }
 .context-panel p { margin: 8px 0 0; color: var(--muted); }
+.context-panel h4 { margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.context-panel .context-over { margin: 0 0 10px; color: var(--warn); }
 .context-rows { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 0; }
 .context-rows dt { color: var(--muted); }
 .context-rows dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }

@@ -154,7 +154,7 @@ Falhas antes do primeiro evento, como o Ollama fora do ar, viram erros HTTP (503
 
 ### Contexto da conversa
 
-O modelo só enxerga `OLLAMA_NUM_CTX` tokens (6144 por padrão). Sem esse ajuste, o Ollama usava 4096 e cortava em silêncio o começo de prompts longos, inclusive as instruções. Cada turno envia as instruções e os schemas das tools (~1.230 tokens, medidos no warmup), o resumo da conversa, as mensagens recentes, as memórias recuperadas e a mensagem nova. `CONTEXT_REPLY_RESERVE` (1024) fica livre para a resposta. O restante é o orçamento **utilizável**, e é ele que o medidor da interface mostra.
+O modelo só enxerga `OLLAMA_NUM_CTX` tokens (a janela; veja **Tamanho da janela** abaixo). Sem esse ajuste, o Ollama usava 4096 e cortava em silêncio o começo de prompts longos, inclusive as instruções. Cada turno envia as instruções e os schemas das tools (~1.230 tokens, medidos no warmup), o resumo da conversa, as mensagens recentes, as memórias recuperadas e a mensagem nova. `CONTEXT_REPLY_RESERVE` (1024) fica livre para a resposta. O restante é o orçamento **utilizável**, usado pelas regras de otimização. O medidor mostra a fração da **janela inteira**, com a reserva hachurada no fim da barra, e o painel mostra o espaço livre antes dela.
 
 **Otimização automática.** Quando o prompt passa de 75% do orçamento, as mensagens mais antigas são incorporadas a um **resumo contínuo**, até o uso voltar para menos de 50%. As 6 mais recentes continuam literais. O histórico completo continua salvo e visível. Só a visão do modelo muda: ele recebe o resumo no prompt de sistema. O resumo tem três seções:
 
@@ -166,7 +166,17 @@ As estimativas de tokens são calibradas pela medição real do turno anterior. 
 
 **Limite operacional.** Incorporar mensagens ao resumo é sustentável e não tem limite. O que perde informação é **condensar** o resumo quando ele passa do orçamento (`CONTEXT_SUMMARY_MAX_TOKENS`, no máximo 20% da janela). Por isso só as condensações são contadas: depois de `CONTEXT_MAX_COMPRESSIONS` (8), o resumo pode crescer além do orçamento, e a conversa **só é encerrada quando nem ele e as últimas mensagens cabem mais na janela**. A conversa encerrada fica somente leitura (409 com `{closed, reason, context}`), e `POST /sessions/{id}/continue` cria uma conversa nova que começa com o resumo. Esse é o único momento em que até os fatos do usuário podem ser condensados, se sozinhos não couberem. Uma mensagem que sozinha não cabe na janela é recusada com 413, e a conversa continua aberta.
 
-**VRAM.** Os modelos de chat e de embeddings precisam caber juntos na GPU. Numa GPU de 8 GB, `qwen3:8b` e `bge-m3` cabem com 6144 (5,5 + 0,6 GB). Com 8192, o Ollama trocava os dois modelos a cada chamada (+4 a 5 s por chamada). O warmup avisa no log quando os modelos não couberem juntos, e o startup avisa quando a janela é pequena demais para a otimização funcionar bem.
+**Tamanho da janela.** Com `OLLAMA_NUM_CTX=auto`, o padrão, o Origin calcula a janela no startup:
+
+- **Limite do modelo:** vem do Ollama (`/api/show`). O `qwen3:8b` suporta 40.960 tokens.
+- **Cache por token:** também vem do modelo. São camadas × cabeças KV × (dim. da chave + dim. do valor) × 2 bytes, ou 144 KiB por token no `qwen3:8b`.
+- **VRAM:** vem do `nvidia-smi`.
+
+Na VRAM precisam caber, juntos, os dois arquivos de modelo, o cache da janela e uma folga (`OLLAMA_VRAM_OVERHEAD_GB`, 1,15 GB), descontada a memória de outros programas. A janela fica no menor valor entre o limite do modelo e o que cabe na VRAM, arredondado para baixo em múltiplos de 1.024.
+
+A folga foi calibrada numa RTX 4070 Laptop de 8 GB com `qwen3:8b` + `bge-m3`: em 6144 os dois modelos ficam carregados; em 7168 e 8192, o Ollama trocava um pelo outro a cada chamada (+4 a 5 s cada). O cálculo dá 6144 tanto com a GPU vazia quanto com os modelos já carregados. Cada processo do Ollama reserva ~150 MiB de contexto CUDA fora do tamanho informado do modelo, e isso não é contado como "outros programas".
+
+Sem GPU NVIDIA ou sem o Ollama no startup, a janela fica em `OLLAMA_NUM_CTX_FALLBACK` (4096), limitada pelo modelo. Um número em `OLLAMA_NUM_CTX` fixa a janela. O painel do medidor mostra a janela, de onde ela veio, o limite do modelo, quanto cabe na VRAM e a GPU. O warmup avisa no log quando os modelos não couberem juntos, e o startup avisa quando a janela é pequena demais para a otimização funcionar bem.
 
 `scripts/eval_context.py` roda uma conversa longa real com janela de 4096 tokens e memória e tools desligadas, então os fatos só podem voltar pelo resumo. Ela planta 4 mensagens com fatos (voo e código da reserva, gerente, função com bug, orçamento), faz 16 perguntas de conhecimento geral e depois pergunta pelos fatos. O resultado foi **5/5 fatos recuperados** depois de 4 otimizações, em três rodadas seguidas. Antes das seções fixas e da rede de segurança, eram 0/5, e a conversa chegava ao limite depois de ~25 mensagens.
 

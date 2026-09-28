@@ -11,6 +11,8 @@ os.environ.setdefault("SQLITE_PATH", os.path.join(_tmp, "origin.db"))
 os.environ.setdefault("CALIBRATION_PATH", os.path.join(_tmp, "calibration.json"))
 os.environ.setdefault("MEMORY_BACKUP_DIR", os.path.join(_tmp, "backups"))
 os.environ.setdefault("OLLAMA_WARMUP", "false")
+# A fixed window: "auto" would probe Ollama and the GPU at startup.
+os.environ.setdefault("OLLAMA_NUM_CTX", "6144")
 
 import chromadb  # noqa: E402
 import pytest  # noqa: E402

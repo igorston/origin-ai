@@ -35,6 +35,7 @@ const el = {
   // context
   contextMeter: $("#context-meter"),
   contextFill: $("#context-fill"),
+  contextReserve: $("#context-reserve"),
   contextLabel: $("#context-label"),
   contextPanel: $("#context-panel"),
   contextNotice: $("#context-notice"),
@@ -406,6 +407,12 @@ function setStreaming(controller) {
 // ---------------------------------------------------------------- context window
 
 const tokens = (n) => n.toLocaleString("pt-BR");
+const WINDOW_SOURCES = {
+  vram: "auto, pela VRAM",
+  model: "auto, limite do modelo",
+  config: "fixa (OLLAMA_NUM_CTX)",
+  fallback: "padrão, VRAM desconhecida",
+};
 const CONTEXT_STATES = {
   ok: "Contexto folgado",
   warning: "Contexto enchendo",
@@ -423,12 +430,16 @@ function renderContext(usage) {
     renderNotice();
     return;
   }
-  const percent = Math.min(usage.percent, 1);
+  // Shown as a share of the model's whole window, with the reply reserve marked at its
+  // end; the thresholds and state still come from the server (a share of the rest).
+  const share = usage.used / usage.window;
   el.contextMeter.className = `context-meter ${usage.state}`;
-  el.contextFill.style.width = `${Math.round(percent * 100)}%`;
-  el.contextLabel.textContent = `${usage.measured ? "" : "~"}${Math.round(usage.percent * 100)}%`;
+  el.contextFill.style.width = `${Math.min(share, 1) * 100}%`;
+  el.contextReserve.style.width = `${((usage.window - usage.usable) / usage.window) * 100}%`;
+  el.contextLabel.textContent = share > 1 ? "cheio" : `${usage.measured ? "" : "~"}${Math.round(share * 100)}%`;
   el.contextMeter.title =
-    `${CONTEXT_STATES[usage.state]}: ${tokens(usage.used)} de ${tokens(usage.usable)} tokens` +
+    `${CONTEXT_STATES[usage.state]}: ${tokens(usage.used)} de ${tokens(usage.window)} tokens ` +
+    `(janela ${WINDOW_SOURCES[usage.window_source] || ""})` +
     (usage.compactions ? ` · otimizado ${usage.compactions}×` : "");
   if (!el.contextPanel.hidden) renderContextPanel();
   renderNotice();
@@ -445,23 +456,46 @@ function renderContextPanel() {
     ["memory", "Memórias recuperadas", u.memory],
     ["message", "Mensagem atual", u.message],
   ].filter(([, , value]) => value > 0);
-  const scale = Math.max(u.usable, 1);
+  const scale = Math.max(u.window, u.used, 1);
+  const reserve = u.window - u.usable;
+  const share = u.used / u.window;
   setChildren(el.contextPanel,
-    h("h3", {}, `${CONTEXT_STATES[u.state]} · ${Math.round(u.percent * 100)}%`),
+    h("h3", {}, `${CONTEXT_STATES[u.state]} · ${share > 1 ? "acima da janela" : `${Math.round(share * 100)}% da janela`}`),
     h("div", { class: "context-stack", title: "Composição estimada" },
       parts.map(([key, label, value]) =>
-        h("span", { class: `seg-${key}`, style: `width:${(value / scale) * 100}%`, title: `${label}: ${tokens(value)}` }))),
+        h("span", { class: `seg-${key}`, style: `width:${(value / scale) * 100}%`, title: `${label}: ${tokens(value)}` })),
+      h("span", { class: "seg-reserve", style: `width:${(reserve / scale) * 100}%;margin-left:auto`, title: `Reservado para a resposta: ${tokens(reserve)}` })),
+    u.used > u.usable
+      ? h("p", { class: "context-over" },
+          u.used > u.window
+            ? "A conversa já não cabe na janela: na próxima mensagem, as mensagens mais antigas serão resumidas."
+            : "A conversa entrou no espaço reservado para a resposta: na próxima mensagem, as mais antigas serão resumidas.")
+      : null,
     h("dl", { class: "context-rows" },
-      h("dt", {}, u.measured ? "Em uso (medido)" : "Em uso (estimado)"), h("dd", {}, `${tokens(u.used)} / ${tokens(u.usable)}`),
+      h("dt", {}, u.measured ? "Em uso (medido)" : "Em uso (estimado)"), h("dd", {}, `${tokens(u.used)} / ${tokens(u.window)}`),
+      h("dt", { title: "Quando acaba, as mensagens mais antigas são resumidas na próxima mensagem" }, "Livre antes da reserva"),
+      h("dd", {}, tokens(Math.max(0, u.usable - u.used))),
       parts.map(([key, label, value]) => [
         h("dt", {}, h("span", { class: `swatch seg-${key}` }), label), h("dd", {}, `~${tokens(value)}`),
       ]),
-      h("dt", {}, "Reservado para a resposta"), h("dd", {}, tokens(u.window - u.usable)),
-      h("dt", {}, "Janela do modelo"), h("dd", {}, tokens(u.window)),
+      h("dt", {}, h("span", { class: "swatch seg-reserve" }), "Reservado para a resposta"), h("dd", {}, tokens(reserve)),
       h("dt", {}, "Mensagens resumidas"), h("dd", {}, String(u.summarized_messages)),
       h("dt", {}, "Otimizações"), h("dd", {}, String(u.compactions)),
       h("dt", { title: "Cada condensação do resumo perde detalhes; no limite, a conversa é encerrada" }, "Condensações do resumo"),
       h("dd", {}, `${u.compressions} / ${u.max_compressions}`),
+    ),
+    h("h4", {}, "Capacidade"),
+    h("dl", { class: "context-rows" },
+      h("dt", {}, "Janela"), h("dd", {}, `${tokens(u.window)} (${WINDOW_SOURCES[u.window_source] || u.window_source})`),
+      u.model_limit ? [h("dt", {}, "Limite do modelo"), h("dd", { title: u.model }, tokens(u.model_limit))] : null,
+      u.vram_limit != null
+        ? [h("dt", { title: "Estimativa: VRAM total, menos outros programas, os dois modelos e o cache de contexto de cada token" }, "Cabe na VRAM"),
+           h("dd", {}, `~${tokens(u.vram_limit)}`)]
+        : null,
+      u.gpu
+        ? [h("dt", {}, "GPU"),
+           h("dd", { title: u.gpu }, `${u.gpu.replace(/^NVIDIA\s+(GeForce\s+)?/i, "")}, ${String(u.vram_total_gb).replace(".", ",")} GB`)]
+        : null,
     ),
     h("p", {},
       "Perto do limite, as mensagens mais antigas são resumidas automaticamente para o modelo ",

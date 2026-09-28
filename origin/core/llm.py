@@ -31,6 +31,7 @@ from origin.core.agent import (
     execute_tool_calls,
     unbacked_claims,
 )
+from origin.core.capacity import num_ctx
 from origin.core.context import JSON_CHARS_PER_TOKEN, estimate_tokens
 from origin.core.language import LANGUAGE_NAMES, detect_language, reply_instruction
 from origin.core.script_guard import ScriptGuard, guard_needed
@@ -96,7 +97,7 @@ def make_chat_model(settings: Settings, temperature: float | None = None) -> Cha
         temperature=settings.ollama_temperature if temperature is None else temperature,
         reasoning=settings.ollama_reasoning,
         keep_alive=settings.ollama_keep_alive,
-        num_ctx=settings.ollama_num_ctx,
+        num_ctx=num_ctx(settings),
         **ollama_client_kwargs(RetryPolicy.from_settings(settings)),
     )
 
