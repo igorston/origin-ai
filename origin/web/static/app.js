@@ -419,8 +419,10 @@ const CONTEXT_STATES = {
   critical: "Contexto quase cheio",
   closed: "Conversa encerrada",
 };
-// Close to the operational limit: say so before the chat actually closes.
-const COMPRESSIONS_WARNING = 2;
+// Close to the operational limit (share of the room taken by content that is never
+// condensed): say so before the chat actually closes.
+const PROTECTED_WARNING = 60;
+const protectedShare = (u) => (u.protected_room > 0 ? Math.round((u.protected / u.protected_room) * 100) : 0);
 
 function renderContext(usage) {
   state.context = usage;
@@ -481,8 +483,10 @@ function renderContextPanel() {
       h("dt", {}, h("span", { class: "swatch seg-reserve" }), "Reservado para a resposta"), h("dd", {}, tokens(reserve)),
       h("dt", {}, "Mensagens resumidas"), h("dd", {}, String(u.summarized_messages)),
       h("dt", {}, "Otimizações"), h("dd", {}, String(u.compactions)),
-      h("dt", { title: "Cada condensação do resumo perde detalhes; no limite, a conversa é encerrada" }, "Condensações do resumo"),
-      h("dd", {}, `${u.compressions} / ${u.max_compressions}`),
+      h("dt", { title: "Condensar encurta só os assuntos do resumo; fatos e textos preservados nunca são condensados" }, "Condensações do resumo"),
+      h("dd", {}, String(u.compressions)),
+      h("dt", { title: "Fatos seus e textos escritos pelo assistente, guardados literalmente no resumo. Quando não couberem mais, a conversa é encerrada." }, "Fatos preservados"),
+      h("dd", {}, `~${tokens(u.protected)} (${protectedShare(u)}% do espaço)`),
     ),
     h("h4", {}, "Capacidade"),
     h("dl", { class: "context-rows" },
@@ -500,7 +504,7 @@ function renderContextPanel() {
     h("p", {},
       "Perto do limite, as mensagens mais antigas são resumidas automaticamente para o modelo ",
       "(o histórico completo continua salvo aqui). Fatos, nomes, números e códigos que você escreveu são preservados. ",
-      "A conversa só é encerrada quando nem o resumo condensado cabe mais."),
+      "Os assuntos são condensados enquanto isso libera espaço; a conversa só é encerrada quando os fatos preservados e as últimas mensagens não cabem mais na janela."),
   );
 }
 
@@ -514,14 +518,12 @@ function renderNotice() {
     el.contextNotice.hidden = false;
     return;
   }
-  const nearLimit = u && u.max_compressions - u.compressions <= COMPRESSIONS_WARNING && u.compressions > 0;
+  // The real limit: what is never condensed (facts, written pieces) filling the room.
+  const nearLimit = u && protectedShare(u) >= PROTECTED_WARNING;
   if (nearLimit) {
-    const left = u.max_compressions - u.compressions;
     el.contextNoticeText.textContent =
-      (left > 0
-        ? `Conversa perto do limite operacional: o resumo pode ser condensado só mais ${left} vez${left === 1 ? "" : "es"}. `
-        : `O resumo não pode mais ser condensado: a conversa será encerrada quando o contexto encher (${Math.round(u.percent * 100)}% agora). `) +
-      "Se preferir, continue numa nova conversa agora (ela leva o resumo).";
+      `Conversa perto do limite: os fatos e textos preservados já ocupam ${protectedShare(u)}% do espaço de contexto e não podem ser condensados. ` +
+      "Quando não couberem mais, a conversa será encerrada. Se preferir, continue numa nova conversa agora (ela leva o resumo).";
   } else if (u?.state === "critical") {
     el.contextNoticeText.textContent =
       "Contexto quase cheio. Na próxima mensagem, as mais antigas serão resumidas automaticamente.";

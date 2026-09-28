@@ -8,6 +8,7 @@ and tools are OFF, so the planted facts can only come back through the summary.
 Usage:
     python scripts/eval_context.py                 # window 4096 tokens
     python scripts/eval_context.py --window 3000 -v
+    python scripts/eval_context.py --rounds 3 --summary-max 150   # long chat, many condensations
 """
 
 import argparse
@@ -58,12 +59,17 @@ QUESTIONS = [
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--window", type=int, default=4096)
+    parser.add_argument(
+        "--rounds", type=int, default=1, help="repeat the general questions (a long chat)"
+    )
+    parser.add_argument("--summary-max", type=int, help="CONTEXT_SUMMARY_MAX_TOKENS override")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
     tmp = tempfile.mkdtemp(prefix="origin-eval-context-")
     os.environ.update(
         CONTEXT_WINDOW=str(args.window),
+        **({"CONTEXT_SUMMARY_MAX_TOKENS": str(args.summary_max)} if args.summary_max else {}),
         SQLITE_PATH=f"{tmp}/origin.db",
         CHROMA_PERSIST_DIR=f"{tmp}/chroma",
         CALIBRATION_PATH=f"{tmp}/calibration.json",
@@ -121,7 +127,7 @@ def main() -> None:
 
         for fact in PLANTED:
             say(fact)
-        for question in FILLER:
+        for question in FILLER * args.rounds:
             say(question)
 
         print(

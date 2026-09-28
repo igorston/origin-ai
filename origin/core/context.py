@@ -10,9 +10,12 @@ transcript stays stored and visible; only the model's view changes). Folding is
 sustainable: the summary keeps USER FACTS intact and a code-level guard preserves the
 user's own sentences whenever a detail (name, number, code, file...) would be lost.
 
-What is lossy is *condensing* the summary when it outgrows its budget, so that is what
-the operational limit counts: the chat closes only after `max_compressions`
-condensations, or when even the summary plus the last `min_recent` messages no longer fit.
+When the summary outgrows its (soft) budget it is *condensed*: TOPICS shrink, USER FACTS
+and PRESERVED never do. That is only attempted while it pays off (TOPICS are a real share
+of the summary), at most twice per turn. There is no fixed number of condensations: a
+chat of general topics can go on indefinitely, while one full of facts reaches its limit
+when what must be preserved, plus the last messages, no longer fits in the window. That
+limit follows the machine and the model, like the window itself.
 """
 
 import logging
@@ -46,6 +49,11 @@ SUMMARY_SHARE = 0.2
 MIN_SCALE = 0.5
 MAX_SCALE = 2.0
 MIN_CALIBRATION_SAMPLE = 300  # estimated tokens
+# Condensing only rewrites TOPICS; below this share of the summary it cannot pay off.
+MIN_CONDENSABLE_SHARE = 0.25
+# A condensation that shrank the summary less than this is not tried again in the turn.
+MIN_CONDENSE_GAIN = 0.1
+MAX_CONDENSE_PER_TURN = 2  # bounds the extra latency of one message
 
 State = Literal["ok", "warning", "critical", "closed"]
 
@@ -74,7 +82,6 @@ class ContextBudget(BaseModel):
     keep_recent: int
     min_recent: int
     summary_max_tokens: int
-    max_compressions: int
     memory_reserve: int
 
     @classmethod
@@ -89,7 +96,6 @@ class ContextBudget(BaseModel):
             keep_recent=settings.context_keep_recent,
             min_recent=settings.context_min_recent,
             summary_max_tokens=settings.context_summary_max_tokens,
-            max_compressions=settings.context_max_compressions,
             memory_reserve=settings.memory_top_k * TOKENS_PER_MEMORY,
         )
 
@@ -115,9 +121,11 @@ class ContextUsage(BaseModel):
     message: int
     memory: int
     compactions: int  # times old messages were folded into the summary (lossless-ish)
-    compressions: int  # times the summary itself was condensed (lossy; limited)
-    max_compressions: int
+    compressions: int  # times the summary's TOPICS were condensed (informational)
     summarized_messages: int
+    # USER FACTS + PRESERVED: never condensed, so they are what fills the window for good.
+    protected: int = 0
+    protected_room: int = 0  # the most the summary and the messages can ever use
     # Where the window size comes from (see origin/core/capacity.py), for the meter.
     window_source: str = "config"
     model: str = ""
@@ -131,7 +139,6 @@ class Compaction(BaseModel):
     folded: int  # messages folded into the summary this time
     compactions: int  # session totals after this step
     compressions: int
-    max_compressions: int
     summary_tokens: int
     compressed: bool  # the summary had to be condensed
     preserved: int  # user sentences kept verbatim by the detail guard
@@ -213,6 +220,23 @@ def split_sections(summary: str) -> dict[str, str]:
     if not any(parts.values()):  # the model ignored the format: treat all as topics
         parts["TOPICS"] = summary
     return {name: text.strip() for name, text in parts.items()}
+
+
+def protected_tokens(summary: str) -> int:
+    """Tokens of the sections that are never condensed (USER FACTS and PRESERVED)."""
+    if not summary:
+        return 0
+    parts = split_sections(summary)
+    return sum(estimate_tokens(parts[name]) for name in ("USER FACTS", "PRESERVED") if parts[name])
+
+
+def worth_condensing(summary: str) -> bool:
+    """Condensing rewrites only TOPICS: when they are a small part of the summary (a chat
+    full of facts), it would cost a model call and lose detail for almost no room."""
+    topics = split_sections(summary)["TOPICS"]
+    return bool(topics) and estimate_tokens(topics) >= MIN_CONDENSABLE_SHARE * estimate_tokens(
+        summary
+    )
 
 
 def join_sections(parts: dict[str, str]) -> str:
@@ -411,7 +435,8 @@ class ContextManager:
             memory=memory,
             compactions=compactions,
             compressions=compressions,
-            max_compressions=b.max_compressions,
+            protected=round(protected_tokens(summary) * scale),
+            protected_room=b.usable - self.base_tokens - b.memory_reserve,
             summarized_messages=summarized,
             model=self.model,
             **(
@@ -527,12 +552,28 @@ class ContextManager:
                 scale=result.scale,
             )
 
-        async def condense() -> int:
+        condensed = 0  # this turn
+        stalled = False  # a condensation that barely helped: do not repeat it now
+
+        async def condense(force: bool = False) -> tuple[bool, int]:
+            """Condense TOPICS if the summary is over budget (or `force`: it does not fit)
+            and it can pay off. Returns (condensed, sentences preserved by the guard)."""
+            nonlocal condensed, stalled
+            if condensed >= MAX_CONDENSE_PER_TURN or stalled:
+                return False, 0
+            if not (force or over_budget()) or not worth_condensing(result.summary):
+                return False, 0
+            before = estimate_tokens(result.summary)
             result.summary, preserved = await self.summarizer.fold(
                 result.summary, [], b.summary_budget // 2
             )
             result.compressions += 1
-            return preserved
+            condensed += 1
+            gain = 1 - estimate_tokens(result.summary) / before
+            if gain < MIN_CONDENSE_GAIN:
+                stalled = True
+                logger.info("Condensing gained only %.0f%%: not trying again this turn", gain * 100)
+            return True, preserved
 
         def record(folded: int, compressed: bool, preserved: int) -> None:
             result.compactions += 1
@@ -541,67 +582,61 @@ class ContextManager:
                 folded=folded,
                 compactions=result.compactions,
                 compressions=result.compressions,
-                max_compressions=b.max_compressions,
                 summary_tokens=estimate_tokens(result.summary),
                 compressed=compressed,
                 preserved=preserved,
             )
             result.steps.append(step)
             logger.info(
-                "Context optimized: folded %d messages (compaction %d, compression %d/%d, "
-                "summary ~%d tokens, %d sentences preserved)",
-                folded, step.compactions, step.compressions, step.max_compressions,
-                step.summary_tokens, preserved,
+                "Context optimized: folded %d messages (compaction %d, condensations %d, "
+                "summary ~%d tokens, ~%d protected, %d sentences preserved)",
+                folded, step.compactions, step.compressions, step.summary_tokens,
+                protected_tokens(result.summary), preserved,
             )  # fmt: skip
 
         def over_budget() -> bool:
             return estimate_tokens(result.summary) * result.scale > b.summary_budget
 
-        can_condense = lambda: result.compressions < b.max_compressions  # noqa: E731
+        async def fold(turns: list) -> None:
+            result.summary, preserved = await self.summarizer.fold(
+                result.summary, turns, b.summary_budget
+            )
+            # The summary budget is soft: when condensing cannot pay off, the summary keeps
+            # growing, as long as the conversation still fits in the window.
+            compressed, extra = await condense()
+            record(len(turns), compressed, preserved + extra)
 
         if self.summarizer is not None and current().percent >= b.compact_at:
             while current().percent >= b.compact_target and len(result.turns) > b.min_recent:
                 keep = b.keep_recent if len(result.turns) > b.keep_recent else b.min_recent
-                fold, result.turns = result.turns[:-keep], result.turns[-keep:]
-                result.summary, preserved = await self.summarizer.fold(
-                    result.summary, fold, b.summary_budget
-                )
-                # The summary budget is soft: once the condensations are used up the summary
-                # may keep growing, as long as the conversation still fits in the window.
-                compressed = over_budget() and can_condense()
-                if compressed:
-                    preserved += await condense()
-                record(len(fold), compressed, preserved)
+                folded, result.turns = result.turns[:-keep], result.turns[-keep:]
+                await fold(folded)
 
         # MIN_RECENT is a preference, not a floor: when even the last messages do not fit (a
         # long story alone can fill the window), they are folded too rather than closing.
         if self.summarizer is not None and result.turns and current().percent > 1:
-            fold, result.turns = result.turns, []
-            result.summary, preserved = await self.summarizer.fold(
-                result.summary, fold, b.summary_budget
-            )
-            compressed = over_budget() and can_condense()
-            if compressed:
-                preserved += await condense()
-            record(len(fold), compressed, preserved)
+            folded, result.turns = result.turns, []
+            await fold(folded)
 
-        # Last resort before closing: spend what is left of the condensations.
-        while current().percent > 1 and self.summarizer and result.summary and can_condense():
-            record(0, True, await condense())
+        # Last resort before closing: condense even under budget, while it still helps.
+        while self.summarizer is not None and current().percent > 1:
+            compressed, preserved = await condense(force=True)
+            if not compressed:
+                break
+            record(0, True, preserved)
 
         final = current()
         if final.percent > 1:
-            if not can_condense():
-                times = f"{b.max_compressions} vez" + ("es" if b.max_compressions != 1 else "")
+            if final.protected > final.protected_room / 2:
                 reason = (
-                    "a conversa atingiu o limite operacional: o resumo já foi condensado "
-                    f"{times} e, mesmo assim, ele e as últimas mensagens não cabem mais na "
-                    "janela de contexto"
+                    "a conversa atingiu o limite operacional: os fatos e textos preservados "
+                    f"dela (~{final.protected} tokens) e as últimas mensagens não cabem mais "
+                    f"na janela de contexto ({b.window} tokens)"
                 )
             else:
                 reason = (
                     "mesmo depois de otimizar, o resumo e as últimas mensagens não cabem na "
-                    "janela de contexto"
+                    f"janela de contexto ({b.window} tokens)"
                 )
             raise ContextClosed(reason, final, result)
         return result

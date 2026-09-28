@@ -78,9 +78,6 @@ class Settings(BaseSettings):
     context_keep_recent: int = 6  # messages kept verbatim when folding
     context_min_recent: int = 2  # never fold below this
     context_summary_max_tokens: int = 800  # condensed past this (capped at 20% of budget)
-    # Operational limit: the chat closes when the summary would need its N+1-th
-    # condensation (each one loses detail). Folding new messages in is not limited.
-    context_max_compressions: int = 8
 
     @field_validator("ollama_base_url")
     @classmethod

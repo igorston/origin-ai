@@ -9,6 +9,7 @@ from main import app
 from origin.api.routes.chat import get_context, get_engine
 from origin.core import ChatTurn, LLMEngine
 from origin.core.context import (
+    SECTIONS,
     ContextBudget,
     ContextClosed,
     ContextManager,
@@ -16,6 +17,7 @@ from origin.core.context import (
     MessageTooLong,
     estimate_tokens,
     guard_details,
+    join_sections,
     key_details,
     split_sections,
 )
@@ -37,6 +39,21 @@ class FakeSummarizer:
         return (merged if turns else merged[: (max_tokens or 400) * 2]), 0
 
 
+class FactsSummarizer(FakeSummarizer):
+    """Like the real summarizer on a chat full of facts: what the user says lands in USER
+    FACTS, which condensing never shrinks (only protect=False does)."""
+
+    async def fold(self, summary, turns, max_tokens=None, *, protect=True):
+        self.calls.append((summary, len(turns)))
+        parts = split_sections(summary) if summary else dict.fromkeys(SECTIONS, "")
+        new = "".join(f"\n- {t.content}" for t in turns if t.role == "user")
+        facts = parts["USER FACTS"] + new
+        if not protect:
+            facts = facts[: (max_tokens or 400) * 2]
+        sections = {"USER FACTS": facts.strip(), "TOPICS": "- conversa", "PRESERVED": ""}
+        return join_sections(sections), 0
+
+
 def budget(**overrides) -> ContextBudget:
     values = dict(
         window=600,
@@ -48,7 +65,6 @@ def budget(**overrides) -> ContextBudget:
         keep_recent=4,
         min_recent=2,
         summary_max_tokens=120,
-        max_compressions=3,
         memory_reserve=20,
     )
     return ContextBudget(**{**values, **overrides})
@@ -116,28 +132,46 @@ async def test_long_summaries_are_condensed_and_counted() -> None:
     assert summarizer.calls[1] == (summarizer.calls[1][0], 0)  # a fold with no turns = condense
 
 
-async def test_operational_limit_counts_condensations_not_folds() -> None:
-    manager = ContextManager(budget(), FakeSummarizer(), base_tokens=50)
-    # Many folds so far, but the summary never had to be condensed: keep going.
-    result = await manager.optimize("", turns(10), "oi", compactions=50)
-    assert result.compactions > 50
-
-    # Condensations used up but the conversation still fits: the summary may outgrow its
-    # (soft) budget and the chat goes on.
-    tight = ContextManager(budget(summary_max_tokens=20), FakeSummarizer(), base_tokens=50)
-    result = await tight.optimize("", turns(10), "oi", compressions=3)
-    assert result.compressions == 3 and estimate_tokens(result.summary) > 20
-
-
-async def test_chat_closes_only_when_condensed_out_and_full() -> None:
-    long_summary = "fato importante " * 150  # ~960 tokens: more than the window alone
+async def test_there_is_no_fixed_cap_on_condensations() -> None:
+    # 50 condensations so far: a chat of general topics can keep condensing them.
     manager = ContextManager(budget(summary_max_tokens=20), FakeSummarizer(), base_tokens=50)
-    with pytest.raises(ContextClosed, match="condensado 3 vezes"):
-        await manager.optimize(long_summary, turns(10), "oi", compressions=3)
+    result = await manager.optimize("", turns(10), "oi", compactions=50, compressions=50)
+    assert result.compressions > 50 and estimate_tokens(result.summary) <= 40
 
-    # With condensations left, it spends them before giving up.
-    result = await manager.optimize(long_summary, turns(10), "oi", compressions=1)
-    assert result.compressions > 1 and manager.usage(result.summary, result.turns).percent <= 1
+
+async def test_condensing_is_skipped_when_protected_facts_dominate() -> None:
+    summarizer = FactsSummarizer()
+    manager = ContextManager(budget(summary_max_tokens=20), summarizer, base_tokens=50)
+    result = await manager.optimize("", turns(10), "oi")
+    # Over budget, but TOPICS are a sliver of it: condensing could not make room.
+    assert result.compressions == 0 and all(n > 0 for _, n in summarizer.calls)
+    assert manager.usage(result.summary, result.turns).protected > 20
+
+
+async def test_a_condensation_that_barely_helps_is_not_repeated_in_the_turn() -> None:
+    class Stubborn(FakeSummarizer):
+        async def fold(self, summary, turns, max_tokens=None):
+            self.calls.append((summary, len(turns)))
+            if not turns:
+                return summary, 0  # "condensed" without shrinking anything
+            return f"{summary} | " + " / ".join(t.content[:20] for t in turns), 0
+
+    summarizer = Stubborn()
+    manager = ContextManager(budget(summary_max_tokens=20, keep_recent=2), summarizer, 50)
+    await manager.optimize("", turns(14), "oi")
+    assert sum(1 for _, n in summarizer.calls if n == 0) == 1
+
+
+async def test_chat_closes_only_when_protected_content_no_longer_fits() -> None:
+    facts = "### USER FACTS\n" + "- pedido PX-1037 da cliente Marta vence em 2 de março\n" * 40
+    manager = ContextManager(budget(summary_max_tokens=20), FakeSummarizer(), base_tokens=50)
+    with pytest.raises(ContextClosed, match="fatos e textos preservados"):
+        await manager.optimize(facts, turns(10), "oi")
+
+    # The same size in TOPICS is condensed instead, and the chat goes on.
+    topics = "### TOPICS\n" + "- explicação sobre o protocolo HTTPS e seus certificados\n" * 40
+    result = await manager.optimize(topics, turns(10), "oi")
+    assert result.compressions >= 1 and manager.usage(result.summary, result.turns).percent <= 1
 
 
 def test_detail_guard_preserves_user_sentences_verbatim() -> None:
@@ -227,6 +261,8 @@ def small_context() -> ContextManager:
 
 
 def test_session_is_optimized_then_closed_then_continued(client: TestClient, small_context) -> None:
+    # A chat full of facts: they are never condensed, so they eventually fill the window.
+    small_context.summarizer = FactsSummarizer()
     model = ScriptedChatModel(responses=[AIMessage("resposta " + "y" * 120)])
     app.dependency_overrides[get_engine] = lambda: LLMEngine(model, "sys", "scripted")
     session_id = client.post("/sessions").json()["id"]
@@ -243,11 +279,12 @@ def test_session_is_optimized_then_closed_then_continued(client: TestClient, sma
     else:
         pytest.fail("the chat never reached its operational limit")
 
-    # Optimized several times before closing, after exactly 3 condensations.
+    # Optimized several times before closing, without condensing facts that cannot shrink.
     assert len(compactions) > 3
-    assert sum(c["compressed"] for c in compactions) == 3
+    assert sum(c["compressed"] for c in compactions) == 0
     closed = response.json()["detail"]
-    assert closed["closed"] is True and "condensado 3 vezes" in closed["reason"]
+    assert closed["closed"] is True and "fatos e textos preservados" in closed["reason"]
+    assert closed["context"]["protected"] > closed["context"]["protected_room"] / 2
     # The model saw the running summary in its system prompt once it existed.
     assert any("Earlier in this conversation" in call[0].content for call in model.received)
 
@@ -255,7 +292,7 @@ def test_session_is_optimized_then_closed_then_continued(client: TestClient, sma
     assert detail["status"] == "closed"
     assert detail["summary"] and detail["summarized_upto"] > 0
     assert detail["context"]["state"] == "closed"
-    assert detail["compressions"] == 3  # the work of the closing turn is kept too
+    assert "pergunta" in detail["summary"]  # the work of the closing turn is kept too
     assert len(detail["messages"]) >= 6  # the full transcript is kept for the user
     # Further messages are refused, not silently dropped.
     assert client.post("/chat", json={"message": "oi", "session_id": session_id}).status_code == 409

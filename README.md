@@ -164,7 +164,18 @@ O modelo só enxerga `OLLAMA_NUM_CTX` tokens (a janela; veja **Tamanho da janela
 
 As estimativas de tokens são calibradas pela medição real do turno anterior. Textos em prosa costumam pesar metade da estimativa, e códigos e preços pesam mais. Sem essa calibração, o chat compactaria cedo demais ou estouraria a reserva.
 
-**Limite operacional.** Incorporar mensagens ao resumo é sustentável e não tem limite. O que perde informação é **condensar** o resumo quando ele passa do orçamento (`CONTEXT_SUMMARY_MAX_TOKENS`, no máximo 20% da janela). Por isso só as condensações são contadas: depois de `CONTEXT_MAX_COMPRESSIONS` (8), o resumo pode crescer além do orçamento, e a conversa **só é encerrada quando nem ele e as últimas mensagens cabem mais na janela**. A conversa encerrada fica somente leitura (409 com `{closed, reason, context}`), e `POST /sessions/{id}/continue` cria uma conversa nova que começa com o resumo. Esse é o único momento em que até os fatos do usuário podem ser condensados, se sozinhos não couberem. Uma mensagem que sozinha não cabe na janela é recusada com 413, e a conversa continua aberta.
+**Limite operacional.** Incorporar mensagens ao resumo não tem limite. Quando o resumo passa do orçamento dele (`CONTEXT_SUMMARY_MAX_TOKENS`, no máximo 20% da janela), ele é **condensado**. A condensação encurta só os assuntos (TOPICS); os fatos do usuário (USER FACTS) e os textos preservados literalmente (PRESERVED) nunca encolhem.
+
+Não há um número fixo de condensações. Com um limite fixo de 8 (a versão anterior), uma conversa cheia de dados gastava as 8 em tentativas que quase não liberavam espaço. Já numa conversa de assuntos gerais, cada condensação liberava muito espaço, e mesmo assim a conversa era encerrada depois da 8ª. Agora:
+
+- A condensação só é tentada se os assuntos forem uma parte real do resumo (≥ 25%).
+- Se uma condensação reduzir menos de 10%, ela não é repetida no mesmo turno.
+- Há no máximo 2 condensações por mensagem, para limitar a espera.
+- Quando condensar não compensa, o resumo cresce além do orçamento.
+
+A conversa **só é encerrada quando os fatos e textos preservados e as últimas mensagens não cabem mais na janela**. Esse limite acompanha a máquina e o modelo, como a própria janela. O medidor mostra quanto do espaço os fatos preservados já ocupam, e a partir de 60% avisa que a conversa se aproxima do limite. Nesse ponto, o botão de continuar numa nova conversa também aparece.
+
+A conversa encerrada fica somente leitura (409 com `{closed, reason, context}`), e `POST /sessions/{id}/continue` cria uma conversa nova que começa com o resumo. Esse é o único momento em que até os fatos do usuário podem ser condensados, se sozinhos não couberem. Uma mensagem que sozinha não cabe na janela é recusada com 413, e a conversa continua aberta.
 
 **Tamanho da janela.** Com `OLLAMA_NUM_CTX=auto`, o padrão, o Origin calcula a janela no startup:
 
