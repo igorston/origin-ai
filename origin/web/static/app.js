@@ -1,5 +1,6 @@
 import { api, ApiError, streamChat } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
+import { brand, formatDateTime, formatNumber, languages, locale, setLanguage, t, translatePage } from "./i18n.js";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -67,7 +68,6 @@ function setOptimize(value) {
 
 // Tools that change stored memories; after they run, memory views are refreshed.
 const MEMORY_TOOLS = new Set(["remember", "forget"]);
-const SOURCE_LABELS = { agent: "agente", manual: "manual" };
 
 // ---------------------------------------------------------------- helpers
 
@@ -102,8 +102,8 @@ function formatDate(iso) {
   const date = new Date(iso);
   const sameDay = date.toDateString() === new Date().toDateString();
   return sameDay
-    ? date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+    ? date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString(locale, { day: "2-digit", month: "short" });
 }
 
 const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
@@ -116,7 +116,7 @@ function scrollToBottom(force = false) {
 
 function describeError(error) {
   if (error instanceof ApiError) return error.message;
-  if (error.name === "TypeError") return "Não foi possível falar com o servidor do Origin.";
+  if (error.name === "TypeError") return t("error.server");
   return error.message || String(error);
 }
 
@@ -140,11 +140,11 @@ async function refreshHealth() {
   let health = null;
   try {
     health = await api.health();
-    if (health.status !== "ok") setHealth("bad", "degradado", "Ollama inacessível ou modelo ausente");
-    else if (!health.ready) setHealth("warn", "carregando", "Modelos fora da memória: a próxima resposta pode levar ~15 s");
-    else setHealth("ok", "online", "Modelos carregados");
+    if (health.status !== "ok") setHealth("bad", t("health.degraded"), t("health.degraded_hint"));
+    else if (!health.ready) setHealth("warn", t("health.loading"), t("health.loading_hint"));
+    else setHealth("ok", t("health.online"), t("health.online_hint"));
   } catch {
-    setHealth("bad", "offline", "Servidor do Origin inacessível");
+    setHealth("bad", t("health.offline"), t("health.offline_hint"));
   }
   renderSystem(health);
   // Poll fast while models load, so the indicator turns green as soon as they are ready.
@@ -153,22 +153,22 @@ async function refreshHealth() {
 
 function renderSystem(health) {
   if (!health) {
-    el.systemInfo.replaceChildren(h("p", { class: "error-text" }, "Servidor do Origin inacessível."));
+    el.systemInfo.replaceChildren(h("p", { class: "error-text" }, t("system.unreachable")));
     return;
   }
   const { ollama } = health;
   const models = Object.entries(ollama.models || {}).map(([name, installed]) => {
     const loaded = ollama.loaded?.[name];
-    const [kind, label] = !installed ? ["bad", "ausente"] : loaded ? ["ok", "carregado"] : ["warn", "em espera"];
+    const [kind, label] = !installed ? ["bad", t("system.model_missing")] : loaded ? ["ok", t("system.model_loaded")] : ["warn", t("system.model_idle")];
     return h("li", {}, h("span", { class: `badge ${kind}` }, label), " ", h("code", {}, name));
   });
   setChildren(el.systemInfo,
     h("dl", { class: "facts" },
-      h("dt", {}, "Status"), h("dd", {}, h("span", { class: health.status === "ok" ? "badge ok" : "badge bad" }, health.status)),
-      h("dt", {}, "Versão"), h("dd", {}, health.version),
-      h("dt", {}, "Ollama"), h("dd", {}, h("code", {}, ollama.url), " ", ollama.reachable ? "✓" : "✕ inacessível"),
+      h("dt", {}, t("system.status")), h("dd", {}, h("span", { class: health.status === "ok" ? "badge ok" : "badge bad" }, health.status)),
+      h("dt", {}, t("system.version")), h("dd", {}, health.version),
+      h("dt", {}, "Ollama"), h("dd", {}, h("code", {}, ollama.url), " ", ollama.reachable ? "✓" : t("system.ollama_down")),
     ),
-    models.length ? h("div", {}, h("h3", {}, "Modelos"), h("ul", { class: "plain" }, models)) : null,
+    models.length ? h("div", {}, h("h3", {}, t("system.models")), h("ul", { class: "plain" }, models)) : null,
   );
 }
 
@@ -186,19 +186,19 @@ async function refreshSessions() {
     ...sessions.map((s) =>
       h("div", { class: `session${s.id === state.sessionId ? " active" : ""}`, "data-id": s.id },
         h("button", { class: "session-open", type: "button", onclick: () => openSession(s.id) },
-          h("span", { class: "session-title" }, s.title || "Nova conversa"),
+          h("span", { class: "session-title" }, s.title || t("session.new")),
           h("span", { class: "session-meta" },
-            `${formatDate(s.updated_at)} · ${s.message_count} msg${s.status === "closed" ? " · encerrada" : ""}`),
+            t("session.meta", { date: formatDate(s.updated_at), n: s.message_count }) + (s.status === "closed" ? t("session.closed_tag") : "")),
         ),
-        h("button", { class: "session-delete", type: "button", title: "Apagar conversa", "aria-label": "Apagar conversa",
+        h("button", { class: "session-delete", type: "button", title: t("session.delete"), "aria-label": t("session.delete"),
           onclick: (event) => { event.stopPropagation(); removeSession(s.id, s.title); } }, "✕"),
       ),
     ),
   );
-  if (!sessions.length) el.sessionList.append(h("p", { class: "muted small" }, "Nenhuma conversa ainda."));
+  if (!sessions.length) el.sessionList.append(h("p", { class: "muted small" }, t("session.none")));
 }
 
-function resetChat(title = "Nova conversa") {
+function resetChat(title = t("session.new")) {
   el.chatTitle.textContent = title;
   el.messages.replaceChildren(el.empty);
   el.empty.hidden = false;
@@ -212,7 +212,7 @@ async function openSession(id) {
   try {
     const session = await api.session(id);
     state.sessionId = id;
-    resetChat(session.title || "Nova conversa");
+    resetChat(session.title || t("session.new"));
     el.empty.hidden = session.messages.length > 0 || Boolean(session.summary);
     // A continued conversation starts from its predecessor's summary.
     if (session.summary && session.summarized_upto === 0) el.messages.append(contextDivider({ inherited: true }));
@@ -224,7 +224,7 @@ async function openSession(id) {
       }
     }
     renderContext(session.context);
-    setClosed(session.status === "closed" ? session.closed_reason || "limite de contexto atingido" : null);
+    setClosed(session.status === "closed" ? session.closed_reason || t("session.closed_default") : null);
     scrollToBottom(true);
     refreshSessions();
   } catch (error) {
@@ -242,7 +242,7 @@ function newChat() {
 }
 
 async function removeSession(id, title) {
-  if (!confirm(`Apagar a conversa "${title || "Nova conversa"}"?`)) return;
+  if (!confirm(t("session.confirm_delete", { title: title || t("session.new") }))) return;
   try {
     await api.deleteSession(id);
     if (id === state.sessionId) newChat();
@@ -270,12 +270,12 @@ function summarizeArgs(args = {}) {
 }
 
 function toolCard(call) {
-  const args = Object.keys(call.args || {}).length ? JSON.stringify(call.args, null, 2) : "(sem argumentos)";
+  const args = Object.keys(call.args || {}).length ? JSON.stringify(call.args, null, 2) : t("tool.no_args");
   return h("details", { class: "tool-call" },
     h("summary", {}, h("span", { class: "tool-icon" }, "🔧"), h("code", {}, call.name), h("span", { class: "tool-args" }, summarizeArgs(call.args))),
     h("div", { class: "tool-body" },
-      h("div", { class: "label" }, "Argumentos"), h("pre", {}, args),
-      h("div", { class: "label" }, "Resultado"), h("pre", {}, call.output),
+      h("div", { class: "label" }, t("tool.args")), h("pre", {}, args),
+      h("div", { class: "label" }, t("tool.result")), h("pre", {}, call.output),
     ),
   );
 }
@@ -377,13 +377,13 @@ async function send(message) {
       if (error.detail.context) renderContext({ ...error.detail.context, state: "closed" });
       setClosed(error.detail.reason);
     } else {
-      reply.fail(error.name === "AbortError" ? "Geração interrompida." : describeError(error));
+      reply.fail(error.name === "AbortError" ? t("chat.stopped") : describeError(error));
     }
   } finally {
     const parts = [formatDate(new Date().toISOString())];
-    if (firstToken != null) parts.push(`1º token ${seconds(firstToken)}`);
-    parts.push(`total ${seconds(performance.now() - started)}`);
-    if (toolCount) parts.push(`${toolCount} tool${toolCount > 1 ? "s" : ""}`);
+    if (firstToken != null) parts.push(t("chat.first_token", { s: seconds(firstToken) }));
+    parts.push(t("chat.total", { s: seconds(performance.now() - started) }));
+    if (toolCount) parts.push(t("chat.tools", { n: toolCount }));
     reply.setMeta(parts.join(" · "));
     setStreaming(null);
     scrollToBottom();
@@ -406,19 +406,9 @@ function setStreaming(controller) {
 
 // ---------------------------------------------------------------- context window
 
-const tokens = (n) => n.toLocaleString("pt-BR");
-const WINDOW_SOURCES = {
-  vram: "auto, pela VRAM",
-  model: "auto, limite do modelo",
-  config: "fixa (OLLAMA_NUM_CTX)",
-  fallback: "padrão, VRAM desconhecida",
-};
-const CONTEXT_STATES = {
-  ok: "Contexto folgado",
-  warning: "Contexto enchendo",
-  critical: "Contexto quase cheio",
-  closed: "Conversa encerrada",
-};
+const tokens = (n) => formatNumber(n);
+const windowSource = (source) => t(`ctx.source.${source}`);
+const contextState = (state) => t(`ctx.state.${state}`);
 // Close to the operational limit (share of the room taken by content that is never
 // condensed): say so before the chat actually closes.
 const PROTECTED_WARNING = 60;
@@ -438,11 +428,14 @@ function renderContext(usage) {
   el.contextMeter.className = `context-meter ${usage.state}`;
   el.contextFill.style.width = `${Math.min(share, 1) * 100}%`;
   el.contextReserve.style.width = `${((usage.window - usage.usable) / usage.window) * 100}%`;
-  el.contextLabel.textContent = share > 1 ? "cheio" : `${usage.measured ? "" : "~"}${Math.round(share * 100)}%`;
+  el.contextLabel.textContent = share > 1 ? t("ctx.full") : `${usage.measured ? "" : "~"}${Math.round(share * 100)}%`;
   el.contextMeter.title =
-    `${CONTEXT_STATES[usage.state]}: ${tokens(usage.used)} de ${tokens(usage.window)} tokens ` +
-    `(janela ${WINDOW_SOURCES[usage.window_source] || ""})` +
-    (usage.compactions ? ` · otimizado ${usage.compactions}×` : "");
+    t("ctx.meter_title", {
+      state: contextState(usage.state),
+      used: tokens(usage.used),
+      window: tokens(usage.window),
+      source: windowSource(usage.window_source),
+    }) + (usage.compactions ? t("ctx.meter_optimized", { n: usage.compactions }) : "");
   if (!el.contextPanel.hidden) renderContextPanel();
   renderNotice();
 }
@@ -452,59 +445,56 @@ function renderContextPanel() {
   if (!u) return;
   // Before a turn the parts are estimates; after one, Ollama reports the real total.
   const parts = [
-    ["base", "Instruções e tools", u.base],
-    ["summary", "Resumo da conversa", u.summary],
-    ["history", "Mensagens recentes", u.history],
-    ["memory", "Memórias recuperadas", u.memory],
-    ["message", "Mensagem atual", u.message],
+    ["base", t("ctx.part.base"), u.base],
+    ["summary", t("ctx.part.summary"), u.summary],
+    ["history", t("ctx.part.history"), u.history],
+    ["memory", t("ctx.part.memory"), u.memory],
+    ["message", t("ctx.part.message"), u.message],
   ].filter(([, , value]) => value > 0);
   const scale = Math.max(u.window, u.used, 1);
   const reserve = u.window - u.usable;
   const share = u.used / u.window;
   setChildren(el.contextPanel,
-    h("h3", {}, `${CONTEXT_STATES[u.state]} · ${share > 1 ? "acima da janela" : `${Math.round(share * 100)}% da janela`}`),
-    h("div", { class: "context-stack", title: "Composição estimada" },
+    h("h3", {}, `${contextState(u.state)} · ${share > 1 ? t("ctx.heading_over") : t("ctx.heading_share", { p: Math.round(share * 100) })}`),
+    h("div", { class: "context-stack", title: t("ctx.composition") },
       parts.map(([key, label, value]) =>
         h("span", { class: `seg-${key}`, style: `width:${(value / scale) * 100}%`, title: `${label}: ${tokens(value)}` })),
-      h("span", { class: "seg-reserve", style: `width:${(reserve / scale) * 100}%;margin-left:auto`, title: `Reservado para a resposta: ${tokens(reserve)}` })),
+      h("span", { class: "seg-reserve", style: `width:${(reserve / scale) * 100}%;margin-left:auto`, title: `${t("ctx.reserve")}: ${tokens(reserve)}` })),
     u.used > u.usable
       ? h("p", { class: "context-over" },
           u.used > u.window
-            ? "A conversa já não cabe na janela: na próxima mensagem, as mensagens mais antigas serão resumidas."
-            : "A conversa entrou no espaço reservado para a resposta: na próxima mensagem, as mais antigas serão resumidas.")
+            ? t("ctx.over_window")
+            : t("ctx.over_reserve"))
       : null,
     h("dl", { class: "context-rows" },
-      h("dt", {}, u.measured ? "Em uso (medido)" : "Em uso (estimado)"), h("dd", {}, `${tokens(u.used)} / ${tokens(u.window)}`),
-      h("dt", { title: "Quando acaba, as mensagens mais antigas são resumidas na próxima mensagem" }, "Livre antes da reserva"),
+      h("dt", {}, u.measured ? t("ctx.used_measured") : t("ctx.used_estimated")), h("dd", {}, `${tokens(u.used)} / ${tokens(u.window)}`),
+      h("dt", { title: t("ctx.free_hint") }, t("ctx.free")),
       h("dd", {}, tokens(Math.max(0, u.usable - u.used))),
       parts.map(([key, label, value]) => [
         h("dt", {}, h("span", { class: `swatch seg-${key}` }), label), h("dd", {}, `~${tokens(value)}`),
       ]),
-      h("dt", {}, h("span", { class: "swatch seg-reserve" }), "Reservado para a resposta"), h("dd", {}, tokens(reserve)),
-      h("dt", {}, "Mensagens resumidas"), h("dd", {}, String(u.summarized_messages)),
-      h("dt", {}, "Otimizações"), h("dd", {}, String(u.compactions)),
-      h("dt", { title: "Condensar encurta só os assuntos do resumo; fatos e textos preservados nunca são condensados" }, "Condensações do resumo"),
+      h("dt", {}, h("span", { class: "swatch seg-reserve" }), t("ctx.reserve")), h("dd", {}, tokens(reserve)),
+      h("dt", {}, t("ctx.summarized")), h("dd", {}, String(u.summarized_messages)),
+      h("dt", {}, t("ctx.optimizations")), h("dd", {}, String(u.compactions)),
+      h("dt", { title: t("ctx.condensations_hint") }, t("ctx.condensations")),
       h("dd", {}, String(u.compressions)),
-      h("dt", { title: "Fatos seus e textos escritos pelo assistente, guardados literalmente no resumo. Quando não couberem mais, a conversa é encerrada." }, "Fatos preservados"),
-      h("dd", {}, `~${tokens(u.protected)} (${protectedShare(u)}% do espaço)`),
+      h("dt", { title: t("ctx.protected_hint") }, t("ctx.protected")),
+      h("dd", {}, t("ctx.protected_value", { n: tokens(u.protected), p: protectedShare(u) })),
     ),
-    h("h4", {}, "Capacidade"),
+    h("h4", {}, t("ctx.capacity")),
     h("dl", { class: "context-rows" },
-      h("dt", {}, "Janela"), h("dd", {}, `${tokens(u.window)} (${WINDOW_SOURCES[u.window_source] || u.window_source})`),
-      u.model_limit ? [h("dt", {}, "Limite do modelo"), h("dd", { title: u.model }, tokens(u.model_limit))] : null,
+      h("dt", {}, t("ctx.window")), h("dd", {}, `${tokens(u.window)} (${windowSource(u.window_source)})`),
+      u.model_limit ? [h("dt", {}, t("ctx.model_limit")), h("dd", { title: u.model }, tokens(u.model_limit))] : null,
       u.vram_limit != null
-        ? [h("dt", { title: "Estimativa: VRAM total, menos outros programas, os dois modelos e o cache de contexto de cada token" }, "Cabe na VRAM"),
+        ? [h("dt", { title: t("ctx.vram_hint") }, t("ctx.vram")),
            h("dd", {}, `~${tokens(u.vram_limit)}`)]
         : null,
       u.gpu
-        ? [h("dt", {}, "GPU"),
+        ? [h("dt", {}, t("ctx.gpu")),
            h("dd", { title: u.gpu }, `${u.gpu.replace(/^NVIDIA\s+(GeForce\s+)?/i, "")}, ${String(u.vram_total_gb).replace(".", ",")} GB`)]
         : null,
     ),
-    h("p", {},
-      "Perto do limite, as mensagens mais antigas são resumidas automaticamente para o modelo ",
-      "(o histórico completo continua salvo aqui). Fatos, nomes, números e códigos que você escreveu são preservados. ",
-      "Os assuntos são condensados enquanto isso libera espaço; a conversa só é encerrada quando os fatos preservados e as últimas mensagens não cabem mais na janela."),
+    h("p", {}, t("ctx.explain")),
   );
 }
 
@@ -513,7 +503,7 @@ function renderNotice() {
   el.contextNotice.classList.toggle("closed", Boolean(state.closed));
   if (state.closed) {
     el.contextNoticeText.textContent =
-      `Esta conversa foi encerrada: ${state.closed}. O histórico está salvo. Continue numa nova conversa, que começa com o resumo desta.`;
+      t("notice.closed", { reason: state.closed });
     el.continueSession.hidden = false;
     el.contextNotice.hidden = false;
     return;
@@ -522,11 +512,10 @@ function renderNotice() {
   const nearLimit = u && protectedShare(u) >= PROTECTED_WARNING;
   if (nearLimit) {
     el.contextNoticeText.textContent =
-      `Conversa perto do limite: os fatos e textos preservados já ocupam ${protectedShare(u)}% do espaço de contexto e não podem ser condensados. ` +
-      "Quando não couberem mais, a conversa será encerrada. Se preferir, continue numa nova conversa agora (ela leva o resumo).";
+      t("notice.near_limit", { p: protectedShare(u) });
   } else if (u?.state === "critical") {
     el.contextNoticeText.textContent =
-      "Contexto quase cheio. Na próxima mensagem, as mais antigas serão resumidas automaticamente.";
+      t("notice.critical");
   }
   el.continueSession.hidden = !nearLimit;
   el.contextNotice.hidden = !(nearLimit || u?.state === "critical");
@@ -536,25 +525,24 @@ function setClosed(reason) {
   state.closed = reason;
   el.input.disabled = Boolean(reason) || Boolean(state.streaming);
   el.send.disabled = Boolean(reason);
-  el.input.placeholder = reason ? "Conversa encerrada: continue numa nova conversa" : "Mensagem para o Origin…";
+  el.input.placeholder = reason ? t("chat.placeholder_closed") : t("chat.placeholder");
   renderNotice();
 }
 
 /** Divider marking where the model's view switches from the summary to real messages. */
 function contextDivider({ folded = 0, summarized = 0, inherited = false } = {}) {
   const label = inherited
-    ? "↪ Continuação: o modelo recebeu o resumo da conversa anterior"
+    ? t("divider.inherited")
     : folded
-      ? `🗜 Contexto otimizado: ${folded} mensage${folded === 1 ? "m resumida" : "ns resumidas"}` +
-        (summarized > folded ? ` (${summarized} no total)` : "")
-      : `🗜 As ${summarized} mensagens acima estão resumidas para o modelo`;
-  const text = h("div", { class: "summary-text" }, "Carregando resumo…");
-  const details = h("details", { class: "context-divider" }, h("summary", { title: "Ver o resumo que o modelo recebe" }, label), text);
+      ? t("divider.folded", { n: folded }) + (summarized > folded ? t("divider.total", { n: summarized }) : "")
+      : t("divider.summarized", { n: summarized });
+  const text = h("div", { class: "summary-text" }, t("divider.loading"));
+  const details = h("details", { class: "context-divider" }, h("summary", { title: t("divider.hint") }, label), text);
   const sessionId = state.sessionId;
   details.addEventListener("toggle", async () => {
     if (!details.open) return;
     try {
-      text.textContent = (await api.session(sessionId)).summary || "(vazio)";
+      text.textContent = (await api.session(sessionId)).summary || t("divider.empty");
     } catch (error) {
       text.textContent = describeError(error);
     }
@@ -565,7 +553,7 @@ function contextDivider({ folded = 0, summarized = 0, inherited = false } = {}) 
 async function continueConversation() {
   if (!state.sessionId || state.streaming) return;
   el.continueSession.disabled = true;
-  el.continueSession.textContent = "Resumindo…";
+  el.continueSession.textContent = t("continue.busy");
   const draft = el.input.value;
   try {
     const next = await api.continueSession(state.sessionId);
@@ -577,7 +565,7 @@ async function continueConversation() {
     toast(describeError(error));
   } finally {
     el.continueSession.disabled = false;
-    el.continueSession.textContent = "Continuar em nova conversa";
+    el.continueSession.textContent = t("continue.button");
   }
 }
 
@@ -594,7 +582,7 @@ async function refreshMemory() {
     records = new Map(all.map((r) => [r.id, r]));
     el.memoryCount.textContent = stats.active || "";
     el.memoryStats.textContent =
-      `${stats.active} ativa${stats.active === 1 ? "" : "s"} · ${stats.archived} arquivada${stats.archived === 1 ? "" : "s"}`;
+      `${t("mem.active", { n: stats.active })} · ${t("mem.archived_count", { n: stats.archived })}`;
     if (!el.memoryDialog.open) return;
 
     // Semantic search only covers active memories; archived ones are matched by text.
@@ -614,7 +602,7 @@ async function refreshMemory() {
     if (!items.length) {
       el.memoryList.append(
         h("li", { class: "memory-empty" },
-          query ? "Nenhuma memória corresponde à busca." : status === "archived" ? "Nenhuma memória arquivada." : "Nenhuma memória ainda. Diga ao Origin \"lembra que…\" ou adicione uma aqui."),
+          query ? t("mem.none_match") : status === "archived" ? t("mem.none_archived") : t("mem.none")),
       );
     }
   } catch (error) {
@@ -628,26 +616,26 @@ function memoryRow(memory) {
   const supersededBy = meta.superseded_by && records.get(meta.superseded_by);
 
   const chips = [
-    meta.source ? h("span", { class: "badge" }, SOURCE_LABELS[meta.source] || meta.source) : null,
-    meta.created_at ? h("span", { class: "muted small", title: new Date(meta.created_at).toLocaleString("pt-BR") }, formatDate(meta.created_at)) : null,
-    meta.edited_at ? h("span", { class: "badge", title: `Editada em ${new Date(meta.edited_at).toLocaleString("pt-BR")}` }, "editada") : null,
-    memory.score != null ? h("span", { class: "badge", title: "Similaridade com a busca" }, `score ${memory.score.toFixed(2)}`) : null,
-    meta.archived ? h("span", { class: "badge warn" }, "arquivada") : null,
-    supersededBy ? h("span", { class: "muted small" }, `substituída por "${supersededBy.content}"`) : null,
+    meta.source ? h("span", { class: "badge" }, t(`mem.source.${meta.source}`)) : null,
+    meta.created_at ? h("span", { class: "muted small", title: formatDateTime(new Date(meta.created_at)) }, formatDate(meta.created_at)) : null,
+    meta.edited_at ? h("span", { class: "badge", title: t("mem.edited_at", { date: formatDateTime(new Date(meta.edited_at)) }) }, t("mem.edited")) : null,
+    memory.score != null ? h("span", { class: "badge", title: t("mem.score_hint") }, `score ${memory.score.toFixed(2)}`) : null,
+    meta.archived ? h("span", { class: "badge warn" }, t("mem.archived")) : null,
+    supersededBy ? h("span", { class: "muted small" }, t("mem.superseded", { text: supersededBy.content })) : null,
   ];
 
-  const body = editing ? memoryEditor(memory) : h("p", { class: "memory-content", title: "Clique duas vezes para editar", ondblclick: () => startEdit(memory.id) }, memory.content);
+  const body = editing ? memoryEditor(memory) : h("p", { class: "memory-content", title: t("mem.dblclick"), ondblclick: () => startEdit(memory.id) }, memory.content);
 
   const actions = editing
     ? null
     : h("div", { class: "memory-actions" },
-        h("button", { class: "link", type: "button", onclick: () => startEdit(memory.id) }, "editar"),
+        h("button", { class: "link", type: "button", onclick: () => startEdit(memory.id) }, t("mem.edit")),
         h("button", { class: "link", type: "button",
-          onclick: () => mutateMemory(() => api.updateMemory(memory.id, { archived: !meta.archived }), meta.archived ? "Memória restaurada." : "Memória arquivada.") },
-          meta.archived ? "restaurar" : "arquivar"),
+          onclick: () => mutateMemory(() => api.updateMemory(memory.id, { archived: !meta.archived }), meta.archived ? t("mem.restored") : t("mem.archived_toast")) },
+          meta.archived ? t("mem.restore") : t("mem.archive")),
         h("button", { class: "link danger", type: "button",
-          onclick: () => confirm(`Apagar definitivamente "${memory.content}"?`) && mutateMemory(() => api.deleteMemory(memory.id), "Memória apagada.") },
-          "apagar"),
+          onclick: () => confirm(t("mem.confirm_delete", { text: memory.content })) && mutateMemory(() => api.deleteMemory(memory.id), t("mem.deleted")) },
+          t("mem.delete")),
       );
 
   const flash = state.memory.highlight.has(memory.id) ? " flash" : "";
@@ -663,27 +651,27 @@ function memoryEditor(memory) {
   const optimize = h("input", { type: "checkbox", class: "optimize-toggle" });
   optimize.checked = optimizeEnabled();
   optimize.addEventListener("change", () => setOptimize(optimize.checked));
-  const saveButton = h("button", { class: "button primary", type: "button" }, "Salvar");
-  const cancelButton = h("button", { class: "button", type: "button" }, "Cancelar");
+  const saveButton = h("button", { class: "button primary", type: "button" }, t("common.save"));
+  const cancelButton = h("button", { class: "button", type: "button" }, t("common.cancel"));
 
   let busy = false;
   const save = async () => {
     const content = textarea.value.trim();
     if (busy) return;
-    if (!content) return toast("O texto da memória não pode ficar vazio.");
+    if (!content) return toast(t("mem.empty_error"));
     if (content === memory.content && !optimize.checked) return cancel();
     busy = true;
     textarea.disabled = saveButton.disabled = cancelButton.disabled = true;
-    saveButton.textContent = optimize.checked ? "Otimizando…" : "Salvando…";
+    saveButton.textContent = optimize.checked ? t("common.optimizing") : t("common.saving");
     try {
       const result = await api.updateMemory(memory.id, { content, optimize: optimize.checked });
       state.memory.editing = null;
-      showCuration(result, "Memória atualizada.");
+      showCuration(result, t("mem.updated"));
     } catch (error) {
       toast(describeError(error));
       busy = false;
       textarea.disabled = saveButton.disabled = cancelButton.disabled = false;
-      saveButton.textContent = "Salvar";
+      saveButton.textContent = t("common.save");
       return;
     }
     await refreshMemory();
@@ -699,9 +687,9 @@ function memoryEditor(memory) {
   return h("div", { class: "memory-editor" },
     textarea,
     h("div", { class: "row-actions" },
-      h("span", { class: "muted small" }, "Enter salva · Esc cancela"),
-      h("label", { class: "check optimize", title: "O modelo reescreve em fatos curtos e separados, sem perder detalhes; evita duplicatas e arquiva o que ficou desatualizado" },
-        optimize, " ✨ Otimizar com IA"),
+      h("span", { class: "muted small" }, t("mem.editor_hint")),
+      h("label", { class: "check optimize", title: t("mem.optimize_hint") },
+        optimize, " ", t("mem.optimize")),
       cancelButton,
       saveButton,
     ),
@@ -715,12 +703,12 @@ function showCuration(result, fallback) {
   const editedId = result.memory?.id;
   const superseded = (result.archived || []).filter((a) => a.id !== editedId || !duplicates.length);
   const parts = [];
-  if (result.normalized && saved.length > 1) parts.push(`dividida em ${saved.length} memórias`);
-  else if (result.normalized && saved.length === 1) parts.push(`otimizada: "${saved[0].content}"`);
-  if (duplicates.length === 1) parts.push(`já existia ("${duplicates[0].content}"), mesclada`);
-  else if (duplicates.length > 1) parts.push(`${duplicates.length} já existiam, mescladas`);
+  if (result.normalized && saved.length > 1) parts.push(t("cur.split", { n: saved.length }));
+  else if (result.normalized && saved.length === 1) parts.push(t("cur.optimized", { text: saved[0].content }));
+  if (duplicates.length === 1) parts.push(t("cur.duplicate", { text: duplicates[0].content }));
+  else if (duplicates.length > 1) parts.push(t("cur.duplicates", { n: duplicates.length }));
   if (superseded.length) {
-    parts.push(`substituiu ${superseded.length} memória${superseded.length > 1 ? "s" : ""} desatualizada${superseded.length > 1 ? "s" : ""}`);
+    parts.push(t("cur.superseded", { n: superseded.length }));
   }
   const message = parts.length ? parts.join(" · ") : fallback;
   toast(message.charAt(0).toUpperCase() + message.slice(1), "info");
@@ -764,12 +752,12 @@ async function refreshTools() {
           h("code", { class: "tool-name" }, tool.name),
           h("p", { class: "tool-description" }, tool.description.trim()),
           Object.keys(tool.args).length
-            ? h("div", { class: "muted small" }, "Argumentos: ", Object.keys(tool.args).join(", "))
-            : h("div", { class: "muted small" }, "Sem argumentos"),
+            ? h("div", { class: "muted small" }, t("tools.args"), Object.keys(tool.args).join(", "))
+            : h("div", { class: "muted small" }, t("tools.no_args")),
         ),
       ),
     );
-    if (!tools.length) el.toolList.append(h("li", { class: "muted" }, "Nenhuma tool carregada."));
+    if (!tools.length) el.toolList.append(h("li", { class: "muted" }, t("tools.none")));
   } catch (error) {
     el.toolList.replaceChildren(h("li", { class: "error-text" }, describeError(error)));
   }
@@ -790,28 +778,19 @@ function openSettings(tab = "general") {
 
 function renderSettingsHint() {
   if (state.calibration?.needs_reindex) {
-    el.settingsHint.textContent = "reindexar";
+    el.settingsHint.textContent = t("settings.hint_reindex");
     return;
   }
-  const off = [!el.useMemory.checked && "memória", !el.useTools.checked && "tools"].filter(Boolean);
-  el.settingsHint.textContent = off.length ? `${off.join(" e ")} off` : "";
+  const off = [!el.useMemory.checked && t("settings.hint_memory"), !el.useTools.checked && t("settings.hint_tools")].filter(Boolean);
+  el.settingsHint.textContent = off.length ? t("settings.hint_off", { list: off.join(t("settings.hint_and")) }) : "";
 }
 
 // ---------------------------------------------------------------- memory calibration
 
-const THRESHOLD_INFO = {
-  dedup: ["Duplicata", "Acima disso, dois fatos são considerados o mesmo e não são salvos de novo."],
-  conflict: ["Candidatos a substituição", "Acima disso, o modelo de chat avalia se o fato novo substitui o antigo."],
-  min_score: ["Relevância na busca", "Memórias abaixo disso não entram no contexto da conversa."],
-};
-const SCORE_LABELS = {
-  paraphrase: "Paráfrases (mesmo fato)",
-  contradiction: "Contradições",
-  compatible: "Fatos compatíveis",
-  unrelated: "Sem relação",
-  relevant: "Perguntas relevantes",
-  irrelevant: "Perguntas irrelevantes",
-};
+const THRESHOLD_INFO = Object.fromEntries(
+  ["dedup", "conflict", "min_score"].map((key) => [key, [t(`cal.threshold.${key}`), t(`cal.threshold.${key}_hint`)]]),
+);
+const scoreLabel = (key) => t(`cal.score.${key}`);
 
 async function refreshCalibration() {
   try {
@@ -823,49 +802,49 @@ async function refreshCalibration() {
   renderSettingsHint();
   const s = state.calibration;
   $("#reindex-banner").hidden = !s.needs_reindex;
-  $("#reindex-banner-text").textContent = s.needs_reindex ? `A memória precisa ser reindexada: ${s.reason}.` : "";
+  $("#reindex-banner-text").textContent = s.needs_reindex ? t("mem.reindex_needed", { reason: s.reason }) : "";
   if (!el.settingsDialog.open) return;
 
-  const dims = (dim) => (dim ? ` · ${dim} dimensões` : "");
+  const dims = (dim) => (dim ? t("cal.dims", { n: dim }) : "");
   const thresholds = Object.entries(THRESHOLD_INFO).map(([key, [label, help]]) =>
     h("tr", {},
       h("th", { title: help }, label),
       h("td", {}, h("code", {}, s.thresholds[key].toFixed(3))),
-      h("td", { class: "muted small" }, s.thresholds[key] === s.defaults[key] ? "padrão" : `padrão ${s.defaults[key].toFixed(3)}`),
+      h("td", { class: "muted small" }, s.thresholds[key] === s.defaults[key] ? t("cal.default") : t("cal.default_value", { v: s.defaults[key].toFixed(3) })),
     ),
   );
   setChildren($("#calibration-status"),
     s.needs_reindex
       ? h("div", { class: "banner warn" },
-          h("span", {}, `As ${s.count} memórias precisam ser reindexadas: ${s.reason}. Até lá, a busca na memória não funciona.`),
-          h("button", { class: "button primary", type: "button", onclick: reindex }, "Reindexar agora"),
+          h("span", {}, t("cal.needs_reindex", { n: s.count, reason: s.reason })),
+          h("button", { class: "button primary", type: "button", onclick: reindex }, t("cal.reindex_now")),
         )
       : null,
     h("dl", { class: "facts" },
-      h("dt", {}, "Embeddings"), h("dd", {}, h("code", {}, s.embed_model), dims(s.current_dim)),
-      h("dt", {}, "Indexadas com"), h("dd", {}, s.indexed_model ? h("code", {}, s.indexed_model) : "—", dims(s.stored_dim), ` · ${s.count} memória${s.count === 1 ? "" : "s"}`),
-      h("dt", {}, "Modelo de chat"), h("dd", {}, h("code", {}, s.chat_model)),
-      h("dt", {}, "Calibração"), h("dd", {},
+      h("dt", {}, t("cal.embeddings")), h("dd", {}, h("code", {}, s.embed_model), dims(s.current_dim)),
+      h("dt", {}, t("cal.indexed_with")), h("dd", {}, s.indexed_model ? h("code", {}, s.indexed_model) : "—", dims(s.stored_dim), t("cal.count", { n: s.count })),
+      h("dt", {}, t("cal.chat_model")), h("dd", {}, h("code", {}, s.chat_model)),
+      h("dt", {}, t("cal.calibration")), h("dd", {},
         s.calibrated
-          ? h("span", { class: "badge ok" }, `calibrado em ${new Date(s.calibrated_at).toLocaleString("pt-BR")}`)
-          : h("span", { class: "badge warn" }, "limiares padrão, não calibrados para este modelo")),
+          ? h("span", { class: "badge ok" }, t("cal.calibrated_at", { date: formatDateTime(new Date(s.calibrated_at)) }))
+          : h("span", { class: "badge warn" }, t("cal.uncalibrated"))),
     ),
     h("table", { class: "thresholds" }, h("tbody", {}, thresholds)),
     h("div", { class: "row-actions start" },
-      h("button", { class: "button primary", type: "button", id: "run-calibration", onclick: calibrate }, "Calibrar"),
-      !s.needs_reindex && s.count ? h("button", { class: "button", type: "button", onclick: reindex }, "Reindexar") : null,
-      s.calibrated ? h("button", { class: "button", type: "button", onclick: resetThresholds }, "Restaurar padrões") : null,
+      h("button", { class: "button primary", type: "button", id: "run-calibration", onclick: calibrate }, t("cal.calibrate")),
+      !s.needs_reindex && s.count ? h("button", { class: "button", type: "button", onclick: reindex }, t("cal.reindex")) : null,
+      s.calibrated ? h("button", { class: "button", type: "button", onclick: resetThresholds }, t("cal.reset")) : null,
     ),
   );
 }
 
 async function reindex() {
   const s = state.calibration;
-  if (!confirm(`Recalcular os vetores de ${s.count} memória(s) com ${s.embed_model}? Um backup em JSON é salvo antes.`)) return;
-  toast("Reindexando…", "info");
+  if (!confirm(t("cal.confirm_reindex", { n: s.count, model: s.embed_model }))) return;
+  toast(t("cal.reindexing"), "info");
   try {
     const result = await api.reindexMemory();
-    toast(`${result.reindexed} memória(s) reindexada(s) em ${result.duration_s} s. Agora calibre os limiares.`, "info");
+    toast(t("cal.reindexed", { n: result.reindexed, s: result.duration_s }), "info");
   } catch (error) {
     toast(describeError(error));
   }
@@ -876,14 +855,14 @@ async function reindex() {
 async function calibrate() {
   const button = $("#run-calibration");
   button.disabled = true;
-  button.textContent = "Calibrando…";
+  button.textContent = t("cal.calibrating");
   try {
     renderReport(await api.runCalibration(false));
   } catch (error) {
     toast(describeError(error));
   } finally {
     button.disabled = false;
-    button.textContent = "Calibrar";
+    button.textContent = t("cal.calibrate");
   }
 }
 
@@ -897,19 +876,19 @@ function renderReport(report) {
     );
   });
   const scores = Object.entries(report.scores).map(([key, st]) =>
-    h("tr", {}, h("th", {}, SCORE_LABELS[key] || key), h("td", {}, st.min.toFixed(2)), h("td", {}, st.mean.toFixed(2)), h("td", {}, st.max.toFixed(2))),
+    h("tr", {}, h("th", {}, scoreLabel(key)), h("td", {}, st.min.toFixed(2)), h("td", {}, st.mean.toFixed(2)), h("td", {}, st.max.toFixed(2))),
   );
   const judge = report.judge;
   $("#calibration-report").replaceChildren(
     h("div", { class: "report" },
-      h("h3", {}, `Resultado · ${report.embed_model} + ${report.chat_model} · ${report.duration_s} s`),
+      h("h3", {}, t("cal.result", { embed: report.embed_model, chat: report.chat_model, s: report.duration_s })),
       h("table", { class: "thresholds" },
-        h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "Em uso"), h("th", {}, "Sugerido"))),
+        h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, t("cal.in_use")), h("th", {}, t("cal.suggested")))),
         h("tbody", {}, rows),
       ),
       h("p", { class: "small" },
-        `Busca: ${report.recall_hits}/${report.recall_total} perguntas encontram seu fato com o limiar sugerido.`,
-        judge ? ` Substituição: ${judge.replaced_contradictions}/${judge.contradictions} contradições reconhecidas, ${judge.false_replacements.length}/${judge.compatible} fatos verdadeiros seriam arquivados.` : "",
+        t("cal.recall", { hits: report.recall_hits, total: report.recall_total }),
+        judge ? t("cal.judge", { replaced: judge.replaced_contradictions, contradictions: judge.contradictions, wrong: judge.false_replacements.length, compatible: judge.compatible }) : "",
       ),
       judge?.false_replacements.length
         ? h("ul", { class: "small" }, judge.false_replacements.map((pair) => h("li", {}, pair)))
@@ -918,15 +897,15 @@ function renderReport(report) {
         ? h("ul", { class: "warnings" }, report.warnings.map((w) => h("li", {}, w)))
         : null,
       h("details", {},
-        h("summary", { class: "small" }, "Distribuição de similaridade"),
+        h("summary", { class: "small" }, t("cal.distribution")),
         h("table", { class: "thresholds scores" },
-          h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "mín"), h("th", {}, "média"), h("th", {}, "máx"))),
+          h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, t("cal.min")), h("th", {}, t("cal.mean")), h("th", {}, t("cal.max")))),
           h("tbody", {}, scores),
         ),
       ),
       h("div", { class: "row-actions start" },
-        h("button", { class: "button primary", type: "button", onclick: () => applySuggested(report.suggested) }, "Aplicar sugeridos"),
-        h("button", { class: "button", type: "button", onclick: () => $("#calibration-report").replaceChildren() }, "Descartar"),
+        h("button", { class: "button primary", type: "button", onclick: () => applySuggested(report.suggested) }, t("cal.apply")),
+        h("button", { class: "button", type: "button", onclick: () => $("#calibration-report").replaceChildren() }, t("cal.discard")),
       ),
     ),
   );
@@ -935,7 +914,7 @@ function renderReport(report) {
 async function applySuggested(thresholds) {
   try {
     await api.setThresholds(thresholds);
-    toast("Limiares calibrados aplicados.", "info");
+    toast(t("cal.applied"), "info");
     $("#calibration-report").replaceChildren();
   } catch (error) {
     toast(describeError(error));
@@ -944,10 +923,10 @@ async function applySuggested(thresholds) {
 }
 
 async function resetThresholds() {
-  if (!confirm("Voltar aos limiares padrão do .env?")) return;
+  if (!confirm(t("cal.confirm_reset"))) return;
   try {
     await api.resetThresholds();
-    toast("Limiares padrão restaurados.", "info");
+    toast(t("cal.reset_done"), "info");
   } catch (error) {
     toast(describeError(error));
   }
@@ -968,6 +947,35 @@ function autoResize() {
   el.input.style.overflowY = el.input.scrollHeight > INPUT_MAX_HEIGHT ? "auto" : "hidden";
 }
 
+// ---------------------------------------------------------------- brand
+
+/** Names, logo, welcome screen, links and the language picker, from the brand. */
+function applyBrand() {
+  translatePage();
+  const logo = $("#brand-logo");
+  if (brand.logo.url) logo.replaceChildren(h("img", { src: brand.logo.url, alt: "" }), " ", brand.product_name);
+  else logo.textContent = `${brand.logo.text} ${brand.product_name}`;
+
+  const welcome = brand.welcome || {};
+  $("#welcome-title").textContent = welcome.title ?? t("brand.welcome_title");
+  $("#welcome-text").textContent = welcome.text ?? t("brand.welcome_text");
+  setChildren($("#suggestions"),
+    (welcome.suggestions ?? t("brand.suggestions")).map((text) =>
+      h("button", { type: "button", class: "suggestion", onclick: () => send(text) }, text)));
+
+  const links = Object.entries(brand.links || {});
+  const nav = $("#brand-links");
+  nav.hidden = !links.length;
+  setChildren(nav, links.map(([label, url]) => h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label)));
+
+  const picker = $("#language");
+  setChildren(picker, Object.entries(languages).map(([code, name]) =>
+    h("option", { value: code, selected: code === locale }, name)));
+  picker.addEventListener("change", () => setLanguage(picker.value));
+
+  el.input.placeholder = t("chat.placeholder");
+}
+
 // ---------------------------------------------------------------- wiring
 
 el.composer.addEventListener("submit", (event) => {
@@ -986,7 +994,6 @@ el.input.addEventListener("keydown", (event) => {
 el.input.addEventListener("input", autoResize);
 el.stop.addEventListener("click", () => state.streaming?.abort());
 el.newSession.addEventListener("click", newChat);
-document.querySelectorAll(".suggestion").forEach((button) => button.addEventListener("click", () => send(button.textContent)));
 
 el.continueSession.addEventListener("click", continueConversation);
 el.contextMeter.addEventListener("click", (event) => {
@@ -1056,17 +1063,17 @@ el.addMemory.addEventListener("submit", async (event) => {
   if (!texts.length) return;
   const submit = el.addMemory.querySelector("[type=submit]");
   submit.disabled = true;
-  submit.textContent = optimize ? "Otimizando…" : "Salvando…";
+  submit.textContent = optimize ? t("common.optimizing") : t("common.saving");
   try {
     const result = await api.addMemory(texts, optimize);
-    showCuration(result, texts.length > 1 ? `${texts.length} memórias salvas.` : "Memória salva.");
+    showCuration(result, texts.length > 1 ? t("mem.saved_many", { n: texts.length }) : t("mem.saved"));
     el.memoryText.value = "";
     el.addMemory.hidden = true;
   } catch (error) {
     toast(describeError(error));
   } finally {
     submit.disabled = false;
-    submit.textContent = "Salvar";
+    submit.textContent = t("common.save");
   }
   await refreshMemory();
 });
@@ -1090,6 +1097,7 @@ $("#reindex-banner-open").addEventListener("click", () => {
   openSettings("calibration");
 });
 
+applyBrand();
 renderSettingsHint();
 refreshCalibration();
 refreshHealth();

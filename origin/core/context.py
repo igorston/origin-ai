@@ -29,8 +29,10 @@ from typing import Literal, Protocol
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
+from origin.branding import translator
 from origin.config import Settings
 from origin.core.capacity import Capacity, num_ctx
+from origin.i18n import Translator
 from origin.prompts import load_prompt
 from origin.retry import DEFAULT_POLICY, RetryPolicy, call_with_retry
 
@@ -382,12 +384,14 @@ class ContextManager:
         base_tokens: int,
         capacity: Capacity | None = None,
         model: str = "",
+        t: Translator | None = None,
     ) -> None:
         self.budget = budget
         self.summarizer = summarizer
         self.base_tokens = base_tokens  # replaced by a measurement at warmup
         self.capacity = capacity
         self.model = model
+        self.t = t or translator()  # closing reasons are shown to the user
 
     def usage(
         self,
@@ -628,16 +632,11 @@ class ContextManager:
         final = current()
         if final.percent > 1:
             if final.protected > final.protected_room / 2:
-                reason = (
-                    "a conversa atingiu o limite operacional: os fatos e textos preservados "
-                    f"dela (~{final.protected} tokens) e as últimas mensagens não cabem mais "
-                    f"na janela de contexto ({b.window} tokens)"
+                reason = self.t(
+                    "context.limit_protected", protected=final.protected, window=b.window
                 )
             else:
-                reason = (
-                    "mesmo depois de otimizar, o resumo e as últimas mensagens não cabem na "
-                    f"janela de contexto ({b.window} tokens)"
-                )
+                reason = self.t("context.limit", window=b.window)
             raise ContextClosed(reason, final, result)
         return result
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
+from origin.branding import translator
 from origin.core import ChatTurn, LLMEngine, ToolCallRecord, TurnUsage
 from origin.core.context import (
     Compaction,
@@ -95,8 +96,7 @@ def closed_error(reason: str, usage: ContextUsage | None) -> HTTPException:
     return HTTPException(
         status.HTTP_409_CONFLICT,
         detail={
-            "message": f"Esta conversa foi encerrada: {reason}. O histórico está salvo; "
-            "continue numa nova conversa (POST /sessions/{id}/continue) levando o resumo.",
+            "message": translator()("chat.closed", reason=reason, id="{id}"),
             "closed": True,
             "reason": reason,
             "context": usage.model_dump() if usage else None,
@@ -153,8 +153,7 @@ async def prepare_turn(
     except MessageTooLong as exc:
         raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE,
-            f"A mensagem tem ~{exc.tokens} tokens e só cabem ~{exc.limit} na janela de "
-            "contexto. Divida-a em partes menores.",
+            translator()("chat.too_long", tokens=exc.tokens, limit=exc.limit),
         ) from exc
     except ContextClosed as exc:
         # Keep the optimization done before giving up: a continuation starts from it.

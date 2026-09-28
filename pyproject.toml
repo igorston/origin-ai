@@ -28,6 +28,7 @@ include = ["origin*"]
 [tool.setuptools.package-data]
 "origin.prompts" = ["templates/*.md"]
 "origin.web" = ["static/*"]
+"origin.i18n" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

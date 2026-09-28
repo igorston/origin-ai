@@ -629,3 +629,12 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: 
   .memory-row { flex-direction: column; gap: 6px; }
   .memory-actions { opacity: 1; }
 }
+
+/* ------------------------------------------------------------ white label */
+
+.logo img { height: 22px; width: auto; vertical-align: -5px; }
+.brand-links { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 10px 0; font-size: 12px; }
+.brand-links a { color: var(--muted); text-decoration: none; }
+.brand-links a:hover { color: var(--accent); text-decoration: underline; }
+.setting.select-setting { align-items: center; justify-content: space-between; }
+.setting.select-setting .select { width: auto; min-width: 180px; }

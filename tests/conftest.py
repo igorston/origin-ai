@@ -13,6 +13,8 @@ os.environ.setdefault("MEMORY_BACKUP_DIR", os.path.join(_tmp, "backups"))
 os.environ.setdefault("OLLAMA_WARMUP", "false")
 # A fixed window: "auto" would probe Ollama and the GPU at startup.
 os.environ.setdefault("OLLAMA_NUM_CTX", "6144")
+# Server messages in the language the tests assert on, whatever the machine's .env says.
+os.environ.setdefault("ORIGIN_LOCALE", "pt-BR")
 
 import chromadb  # noqa: E402
 import pytest  # noqa: E402

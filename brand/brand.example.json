@@ -1,0 +1,19 @@
+{
+  "product_name": "Aurora",
+  "assistant_name": "Aurora",
+  "description": "Local AI assistant of Silva & Associates.",
+  "logo": "logo.svg",
+  "favicon": "logo.svg",
+  "locale": "pt-BR",
+  "persona": "You are Aurora, the assistant of the Silva & Associates law firm. Be courteous and formal. On legal topics, remind the user that your answers do not replace a lawyer's opinion.",
+  "theme": {
+    "light": { "accent": "#0f766e", "accent-soft": "#e6f4f1", "user-bubble": "#0f766e" },
+    "dark": { "accent": "#2dd4bf", "accent-soft": "#123b36", "user-bubble": "#0f766e" }
+  },
+  "welcome": {
+    "title": "Olá! Eu sou a Aurora.",
+    "text": "Sua assistente local do escritório Silva & Associados.",
+    "suggestions": ["Quem é você?", "Lembre que o prazo do processo 4521 vence dia 10/11."]
+  },
+  "links": { "Website": "https://example.com", "Support": "https://example.com/support" }
+}

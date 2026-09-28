@@ -1,4 +1,4 @@
-"""Origin — entry point.
+"""Entry point (the product name comes from the brand file, see origin/branding.py).
 
 Run:
     python main.py
@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from origin import __version__
 from origin.api.errors import register_error_handlers
 from origin.api.routes import calibration, chat, health, memory, sessions, tools
+from origin.branding import get_brand
 from origin.config import get_settings
 from origin.core import LLMEngine, make_chat_model
 from origin.core.capacity import capacity_for
@@ -31,6 +32,7 @@ from origin.retry import RetryPolicy
 from origin.web import mount_web
 
 settings = get_settings()
+brand = get_brand(settings)
 
 logging.basicConfig(
     level=settings.origin_log_level.upper(),
@@ -96,7 +98,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         model=settings.ollama_model,
     )
     logger.info(
-        "Origin Core Initialized (v%s) | model=%s | embeddings=%s | memories=%d | tools=%s",
+        "%s initialized (v%s) | model=%s | embeddings=%s | memories=%d | tools=%s",
+        brand.product_name,
         __version__,
         settings.ollama_model,
         settings.ollama_embed_model,
@@ -131,12 +134,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     if warmup_task:
         warmup_task.cancel()
-    logger.info("Origin Core shutting down")
+    logger.info("%s shutting down", brand.product_name)
 
 
 app = FastAPI(
-    title="Origin",
-    description="Local-first, modular personal AI assistant.",
+    title=brand.product_name,
+    description=brand.description,
     version=__version__,
     lifespan=lifespan,
 )

@@ -24,6 +24,8 @@ from typing import Protocol
 from langchain_core.embeddings import Embeddings
 from pydantic import BaseModel
 
+from origin.branding import translator
+from origin.i18n import Translator
 from origin.memory.vectorstore import VectorMemory
 
 logger = logging.getLogger(__name__)
@@ -245,7 +247,9 @@ async def measure(
     current: Thresholds,
     embed_model: str,
     chat_model: str,
+    t: Translator | None = None,
 ) -> CalibrationReport:
+    t = t or translator()  # the warnings are shown in the interface
     started = time.perf_counter()
     paraphrase = await _pair_scores(embeddings, PARAPHRASES)
     contradiction = await _pair_scores(embeddings, CONTRADICTIONS)
@@ -274,10 +278,7 @@ async def measure(
         max(not_duplicates) + DEDUP_MARGIN, _between(max(not_duplicates), min(paraphrase), 0)
     )
     if min(paraphrase) <= max(not_duplicates):
-        warnings.append(
-            "Paráfrases e fatos diferentes se sobrepõem neste modelo de embeddings: "
-            "algumas duplicatas não serão mescladas."
-        )
+        warnings.append(t("calibration.dedup_overlap"))
 
     # Conflict: only preselects candidates for the judge, so it must sit below every
     # contradiction; extra candidates just cost one cheap judge call each.
@@ -288,10 +289,7 @@ async def measure(
     # (e.g. 0.44 vs 0.56 for the same fact), so stay a margin below the weakest one.
     min_score = min(relevant) - RECALL_MARGIN
     if min(relevant) <= max(irrelevant):
-        warnings.append(
-            "Perguntas relevantes e irrelevantes se sobrepõem: algumas memórias sem relação "
-            "podem entrar no contexto."
-        )
+        warnings.append(t("calibration.recall_overlap"))
     suggested = Thresholds(
         dedup=round(min(dedup, 0.99), 3),
         conflict=round(conflict, 3),
@@ -309,16 +307,9 @@ async def measure(
             compatible=len(COMPATIBLE),
         )
         if wrongly:
-            warnings.append(
-                f"O modelo de chat arquivaria {len(wrongly)} fato(s) ainda verdadeiro(s) "
-                "(ver relatório). As memórias arquivadas podem ser restauradas, mas considere "
-                "outro modelo de chat."
-            )
+            warnings.append(t("calibration.false_replacements", count=len(wrongly)))
         if sum(replaced) < len(CONTRADICTIONS) / 2:
-            warnings.append(
-                "O modelo de chat reconhece poucas contradições: fatos desatualizados tendem "
-                "a permanecer ativos."
-            )
+            warnings.append(t("calibration.weak_judge"))
 
     return CalibrationReport(
         embed_model=embed_model,
@@ -410,13 +401,12 @@ class MemoryCalibrator:
         current = await self._current_dim() if probe and count else None
         reason = None
         if count and stored and current and stored != current:
-            reason = (
-                f"os vetores guardados têm {stored} dimensões e o modelo atual "
-                f"({self.embed_model}) gera {current}"
+            reason = translator()(
+                "calibration.dim_mismatch", stored=stored, model=self.embed_model, current=current
             )
         elif count and state.embed_model and state.embed_model != self.embed_model:
-            reason = (
-                f"as memórias foram indexadas com {state.embed_model}, não com {self.embed_model}"
+            reason = translator()(
+                "calibration.model_changed", indexed=state.embed_model, current=self.embed_model
             )
         return IndexStatus(
             embed_model=self.embed_model,

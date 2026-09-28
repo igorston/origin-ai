@@ -1,42 +1,45 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="{{lang}}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Origin</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>" />
+    <title>{{title}}</title>
+    <link rel="icon" href="{{favicon}}" />
     <link rel="stylesheet" href="/static/styles.css" />
+    <style id="brand-theme">{{theme}}</style>
+    <script id="boot" type="application/json">{{boot}}</script>
   </head>
   <body>
     <div class="app" id="app">
-      <aside class="sidebar" id="sidebar" aria-label="Conversas">
+      <aside class="sidebar" id="sidebar" data-i18n-attr="aria-label:nav.sessions">
         <header class="brand">
-          <span class="logo">🧬 Origin</span>
-          <button class="health" id="health" type="button" title="Estado do sistema">
+          <span class="logo" id="brand-logo"></span>
+          <button class="health" id="health" type="button" data-i18n-attr="title:health.title">
             <span class="dot"></span><span class="health-label">…</span>
           </button>
         </header>
-        <button class="button primary block" id="new-session" type="button">+ Nova conversa</button>
+        <button class="button primary block" id="new-session" type="button" data-i18n="session.new_button"></button>
         <nav class="session-list" id="session-list"></nav>
 
         <footer class="sidebar-footer">
           <button class="footer-button" id="open-memory" type="button">
             <span class="footer-icon">🧠</span>
-            <span class="footer-label">Memória</span>
+            <span class="footer-label" data-i18n="nav.memory"></span>
             <span class="footer-count" id="memory-count"></span>
           </button>
           <button class="footer-button" id="open-settings" type="button">
             <span class="footer-icon">⚙</span>
-            <span class="footer-label">Configurações</span>
+            <span class="footer-label" data-i18n="nav.settings"></span>
             <span class="footer-hint" id="settings-hint"></span>
           </button>
+          <nav class="brand-links" id="brand-links" hidden></nav>
         </footer>
       </aside>
 
       <main class="chat">
         <header class="chat-header">
-          <button class="icon-button only-mobile" id="open-sidebar" type="button" aria-label="Conversas">☰</button>
-          <h1 class="chat-title" id="chat-title">Nova conversa</h1>
+          <button class="icon-button only-mobile" id="open-sidebar" type="button" data-i18n-attr="aria-label:nav.sessions">☰</button>
+          <h1 class="chat-title" id="chat-title" data-i18n="session.new"></h1>
           <div class="context-meter-wrap">
             <button class="context-meter" id="context-meter" type="button" hidden aria-expanded="false" aria-controls="context-panel">
               <span class="context-bar"><span class="context-fill" id="context-fill"></span><span class="context-reserve" id="context-reserve"></span></span>
@@ -48,24 +51,20 @@
 
         <section class="messages" id="messages" aria-live="polite">
           <div class="empty" id="empty-state">
-            <p class="empty-title">Converse com o Origin</p>
-            <p>Tudo roda localmente. Experimente:</p>
-            <div class="suggestions">
-              <button type="button" class="suggestion">Lembra que eu moro em Recife.</button>
-              <button type="button" class="suggestion">Que dia será daqui a um ano?</button>
-              <button type="button" class="suggestion">Onde eu moro?</button>
-            </div>
+            <p class="empty-title" id="welcome-title"></p>
+            <p id="welcome-text"></p>
+            <div class="suggestions" id="suggestions"></div>
           </div>
         </section>
 
         <div class="context-notice" id="context-notice" hidden>
           <span id="context-notice-text"></span>
-          <button class="button primary" id="continue-session" type="button" hidden>Continuar em nova conversa</button>
+          <button class="button primary" id="continue-session" type="button" hidden data-i18n="continue.button"></button>
         </div>
         <form class="composer" id="composer">
-          <textarea id="input" rows="1" placeholder="Mensagem para o Origin…" title="Enter envia · Shift+Enter quebra linha" autocomplete="off"></textarea>
-          <button class="button primary" id="send" type="submit">Enviar</button>
-          <button class="button danger" id="stop" type="button" hidden>Parar</button>
+          <textarea id="input" rows="1" data-i18n-attr="title:chat.input_hint" autocomplete="off"></textarea>
+          <button class="button primary" id="send" type="submit" data-i18n="chat.send"></button>
+          <button class="button danger" id="stop" type="button" hidden data-i18n="chat.stop"></button>
         </form>
       </main>
       <div class="scrim" id="scrim"></div>
@@ -75,40 +74,40 @@
     <dialog class="dialog wide" id="memory-dialog" aria-labelledby="memory-title">
       <header class="dialog-header">
         <div>
-          <h2 id="memory-title">Memória</h2>
+          <h2 id="memory-title" data-i18n="mem.title"></h2>
           <p class="muted small" id="memory-stats">…</p>
         </div>
-        <button class="icon-button" type="button" data-close aria-label="Fechar">✕</button>
+        <button class="icon-button" type="button" data-close data-i18n-attr="aria-label:common.close">✕</button>
       </header>
 
       <div class="banner warn" id="reindex-banner" hidden>
         <span id="reindex-banner-text"></span>
-        <button class="button" type="button" id="reindex-banner-open">Resolver</button>
+        <button class="button" type="button" id="reindex-banner-open" data-i18n="mem.resolve"></button>
       </div>
 
       <div class="memory-toolbar">
-        <input class="field" id="memory-search" type="search" placeholder="Buscar por significado…" />
-        <div class="segmented" role="radiogroup" aria-label="Estado">
-          <button type="button" data-status="active" class="active">Ativas</button>
-          <button type="button" data-status="archived">Arquivadas</button>
-          <button type="button" data-status="all">Todas</button>
+        <input class="field" id="memory-search" type="search" data-i18n-attr="placeholder:mem.search" />
+        <div class="segmented" role="radiogroup" data-i18n-attr="aria-label:mem.filter_state">
+          <button type="button" data-status="active" class="active" data-i18n="mem.filter_active"></button>
+          <button type="button" data-status="archived" data-i18n="mem.filter_archived"></button>
+          <button type="button" data-status="all" data-i18n="mem.filter_all"></button>
         </div>
-        <select class="field select" id="memory-source" aria-label="Origem">
-          <option value="">Toda origem</option>
-          <option value="agent">Agente</option>
-          <option value="manual">Manual</option>
+        <select class="field select" id="memory-source" data-i18n-attr="aria-label:mem.filter_source">
+          <option value="" data-i18n="mem.source_all"></option>
+          <option value="agent" data-i18n="mem.source_agent_option"></option>
+          <option value="manual" data-i18n="mem.source_manual_option"></option>
         </select>
-        <button class="button primary" id="toggle-add" type="button">+ Adicionar</button>
+        <button class="button primary" id="toggle-add" type="button" data-i18n="mem.add"></button>
       </div>
 
       <form class="add-memory" id="add-memory" hidden>
-        <textarea class="field" id="memory-text" rows="3" placeholder="Escreva livremente (ex.: moro em recife e meu cachorro se chama thor)"></textarea>
+        <textarea class="field" id="memory-text" rows="3" data-i18n-attr="placeholder:mem.add_placeholder"></textarea>
         <div class="row-actions">
-          <label class="check optimize" title="O modelo reescreve em fatos curtos e separados, sem perder detalhes; evita duplicatas e arquiva o que ficou desatualizado">
-            <input type="checkbox" class="optimize-toggle" checked /> ✨ Otimizar com IA
+          <label class="check optimize" data-i18n-attr="title:mem.optimize_hint">
+            <input type="checkbox" class="optimize-toggle" checked /> <span data-i18n="mem.optimize"></span>
           </label>
-          <button class="button" type="button" id="cancel-add">Cancelar</button>
-          <button class="button primary" type="submit">Salvar</button>
+          <button class="button" type="button" id="cancel-add" data-i18n="common.cancel"></button>
+          <button class="button primary" type="submit" data-i18n="common.save"></button>
         </div>
       </form>
 
@@ -118,39 +117,43 @@
     <!-- Settings ----------------------------------------------------------------- -->
     <dialog class="dialog" id="settings-dialog" aria-labelledby="settings-title">
       <header class="dialog-header">
-        <h2 id="settings-title">Configurações</h2>
-        <button class="icon-button" type="button" data-close aria-label="Fechar">✕</button>
+        <h2 id="settings-title" data-i18n="settings.title"></h2>
+        <button class="icon-button" type="button" data-close data-i18n-attr="aria-label:common.close">✕</button>
       </header>
       <nav class="tabs" role="tablist">
-        <button class="tab active" type="button" role="tab" data-tab="general">Geral</button>
-        <button class="tab" type="button" role="tab" data-tab="calibration">Memória</button>
-        <button class="tab" type="button" role="tab" data-tab="tools">Tools</button>
-        <button class="tab" type="button" role="tab" data-tab="system">Sistema</button>
+        <button class="tab active" type="button" role="tab" data-tab="general" data-i18n="settings.tab.general"></button>
+        <button class="tab" type="button" role="tab" data-tab="calibration" data-i18n="settings.tab.calibration"></button>
+        <button class="tab" type="button" role="tab" data-tab="tools" data-i18n="settings.tab.tools"></button>
+        <button class="tab" type="button" role="tab" data-tab="system" data-i18n="settings.tab.system"></button>
       </nav>
 
       <section class="tab-panel" data-panel="general">
         <label class="setting">
           <input type="checkbox" id="use-memory" checked />
           <span>
-            <strong>Usar memória de longo prazo</strong>
-            <span class="muted small">Busca fatos salvos relevantes para cada mensagem.</span>
+            <strong data-i18n="settings.use_memory"></strong>
+            <span class="muted small" data-i18n="settings.use_memory_hint"></span>
           </span>
         </label>
         <label class="setting">
           <input type="checkbox" id="use-tools" checked />
           <span>
-            <strong>Permitir tools</strong>
-            <span class="muted small">O agente pode salvar memórias, consultar datas etc.</span>
+            <strong data-i18n="settings.use_tools"></strong>
+            <span class="muted small" data-i18n="settings.use_tools_hint"></span>
           </span>
         </label>
-        <p class="muted small">Estas preferências valem para as próximas mensagens e ficam salvas neste navegador.</p>
+        <label class="setting select-setting">
+          <span>
+            <strong data-i18n="settings.language"></strong>
+            <span class="muted small" data-i18n="settings.language_hint"></span>
+          </span>
+          <select class="field select" id="language"></select>
+        </label>
+        <p class="muted small" data-i18n="settings.prefs_note"></p>
       </section>
 
       <section class="tab-panel" data-panel="calibration" hidden>
-        <p class="muted small">
-          Os limiares da memória (duplicata, substituição e busca) dependem do modelo de embeddings, e a checagem
-          de substituição depende do modelo de chat. Ao trocar de modelo, reindexe e calibre.
-        </p>
+        <p class="muted small" data-i18n="cal.intro"></p>
         <div id="calibration-status"></div>
         <div id="calibration-report"></div>
       </section>
@@ -162,7 +165,7 @@
       <section class="tab-panel" data-panel="system" hidden>
         <div id="system-info"></div>
         <div class="row-actions start">
-          <button class="button" id="refresh-health" type="button">Verificar novamente</button>
+          <button class="button" id="refresh-health" type="button" data-i18n="system.recheck"></button>
           <a class="button" href="/docs" target="_blank">API /docs</a>
         </div>
       </section>

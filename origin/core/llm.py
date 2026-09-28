@@ -24,6 +24,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
 
+from origin.branding import get_brand, system_prompt
 from origin.config import Settings
 from origin.core.agent import (
     ToolCallRecord,
@@ -172,7 +173,7 @@ class LLMEngine:
     ) -> "LLMEngine":
         return cls(
             make_chat_model(settings),
-            load_prompt("system"),
+            system_prompt(get_brand(settings)),
             settings.ollama_model,
             memory=memory,
             memory_top_k=settings.memory_top_k,

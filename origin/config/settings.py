@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     origin_port: int = 8000
     origin_log_level: str = "INFO"
     origin_locale: str = "en-US"
+    # White-label brand file (names, logo, colors, persona); see brand/brand.example.json.
+    origin_brand_path: str = "./brand/brand.json"
 
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:8b"

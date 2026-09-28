@@ -8,6 +8,7 @@ from chromadb.errors import InvalidArgumentError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from origin.branding import translator
 from origin.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -36,12 +37,7 @@ def register_error_handlers(app: FastAPI) -> None:
         # The embedding model changed: stored vectors have another dimension.
         return JSONResponse(
             status_code=409,
-            content={
-                "detail": (
-                    "A memória foi indexada com outro modelo de embeddings e precisa ser "
-                    f"reindexada (Configurações → Memória, ou POST /memory/reindex). {exc}"
-                )
-            },
+            content={"detail": translator()("memory.reindex_needed", detail=str(exc))},
         )
 
     app.add_exception_handler(httpx.ConnectError, ollama_unreachable)
