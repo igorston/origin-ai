@@ -1,0 +1,40 @@
+# Origin + Ollama.
+#
+#   docker compose up -d            # CPU (or Apple / AMD via Ollama's own image variants)
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # NVIDIA GPU
+#
+# Then open http://127.0.0.1:8000 — the first-run screen downloads the models.
+# The brand is read from ./brand (see brand/brand.example.json); data stays in volumes.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+  origin:
+    build: .
+    image: origin-ai:latest
+    depends_on:
+      - ollama
+    # Settings go here, not in a local .env (its ./data paths would bypass the volume).
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      ORIGIN_LOCALE: ${ORIGIN_LOCALE:-en-US}
+      # Without a GPU visible to this container the window cannot be sized from VRAM:
+      # "auto" then falls back to OLLAMA_NUM_CTX_FALLBACK (4096). The GPU override
+      # file gives this container the GPU too, so "auto" works there.
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-auto}
+    ports:
+      # Only this machine can reach it. To serve other machines, enable authentication
+      # (ORIGIN_AUTH=password) and put HTTPS in front: see docs/deployment.md.
+      - "127.0.0.1:${ORIGIN_PORT:-8000}:8000"
+    volumes:
+      - origin-data:/data
+      - ./brand:/brand:ro
+    restart: unless-stopped
+
+volumes:
+  ollama:
+  origin-data:

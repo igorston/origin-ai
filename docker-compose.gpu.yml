@@ -1,0 +1,22 @@
+# NVIDIA GPU (requires the NVIDIA Container Toolkit, or Docker Desktop with WSL 2):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Origin gets the GPU too, only to read its memory (nvidia-smi) and size the window.
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  origin:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [utility]

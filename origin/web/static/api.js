@@ -57,7 +57,12 @@ export const api = {
   setThresholds: (thresholds) => request("PUT", "/memory/calibration/thresholds", thresholds),
   resetThresholds: () => request("DELETE", "/memory/calibration/thresholds"),
   reindexMemory: () => request("POST", "/memory/reindex"),
+
+  setupStatus: () => request("GET", "/setup/status"),
 };
+
+/** First-run setup: download the models Ollama is missing (progress events). */
+export const pullModels = (signal) => postEvents("/setup/pull", {}, signal);
 
 /** Parse one SSE block ("event: x\ndata: {...}") into {event, data}. */
 export function parseSseBlock(block) {
@@ -71,14 +76,14 @@ export function parseSseBlock(block) {
 }
 
 /**
- * POST /chat/events and yield its Server-Sent Events. EventSource only supports GET,
- * so the stream is read and split manually.
+ * POST a Server-Sent Events endpoint and yield its events. EventSource only supports
+ * GET, so the stream is read and split manually.
  */
-export async function* streamChat(body, signal) {
-  const response = await fetch("/chat/events", {
+async function* postEvents(path, body, signal) {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body ?? {}),
     signal,
   });
   if (!response.ok) throw await apiError(response);
@@ -97,3 +102,6 @@ export async function* streamChat(body, signal) {
     }
   }
 }
+
+/** POST /chat/events: context, tool_call, token, done / error. */
+export const streamChat = (body, signal) => postEvents("/chat/events", body, signal);

@@ -1,6 +1,7 @@
 """Conversation sessions persisted in a local SQLite database."""
 
 import asyncio
+import builtins  # the `list` method below shadows the builtin in later annotations (<3.14)
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -228,7 +229,7 @@ class SessionStore:
 
     async def messages(
         self, session_id: str, limit: int | None = None, after_id: int = 0
-    ) -> list[StoredMessage]:
+    ) -> builtins.list[StoredMessage]:
         """Most recent `limit` messages with id > `after_id`, in chronological order."""
         return await asyncio.to_thread(self._messages, session_id, limit, after_id)
 
@@ -237,7 +238,7 @@ class SessionStore:
         session_id: str,
         role: Role,
         content: str,
-        tool_calls: list[dict[str, Any]] | None = None,
+        tool_calls: builtins.list[dict[str, Any]] | None = None,
         tokens: int = 0,
     ) -> int:
         return await asyncio.to_thread(

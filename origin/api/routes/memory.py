@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, model_validator
 
+from origin.api.routes.chat import get_workspace
 from origin.memory import MemoryHit, MemoryRecord, MetadataValue, VectorMemory
 from origin.memory.curator import CurationResult, MemoryCurator
 
@@ -47,11 +48,11 @@ class MemoryStats(BaseModel):
 
 
 def get_memory(request: Request) -> VectorMemory:
-    return request.app.state.memory
+    return get_workspace(request).memory
 
 
 def get_curator(request: Request) -> MemoryCurator:
-    return request.app.state.curator
+    return get_workspace(request).curator
 
 
 Memory = Annotated[VectorMemory, Depends(get_memory)]

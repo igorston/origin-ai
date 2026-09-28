@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
+from origin.api.routes.chat import get_workspace
 from origin.memory.calibration import (
     CalibrationReport,
     IndexStatus,
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/memory", tags=["memory calibration"])
 
 
 def get_calibrator(request: Request) -> MemoryCalibrator:
-    return request.app.state.calibrator
+    return get_workspace(request).calibrator
 
 
 Calibrator = Annotated[MemoryCalibrator, Depends(get_calibrator)]

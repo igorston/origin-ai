@@ -171,6 +171,23 @@
       </section>
     </dialog>
 
+    <!-- First-run setup ------------------------------------------------------------ -->
+    <dialog class="dialog" id="setup-dialog" aria-labelledby="setup-title">
+      <header class="dialog-header">
+        <h2 id="setup-title" data-i18n="setup.title"></h2>
+        <button class="icon-button" type="button" data-close data-i18n-attr="aria-label:common.close">✕</button>
+      </header>
+      <section class="setup-body">
+        <p id="setup-text"></p>
+        <ul class="setup-models" id="setup-models"></ul>
+        <p class="error-text" id="setup-error" hidden></p>
+        <div class="row-actions start">
+          <button class="button primary" id="setup-pull" type="button" data-i18n="setup.pull"></button>
+          <button class="button" id="setup-recheck" type="button" data-i18n="system.recheck"></button>
+        </div>
+      </section>
+    </dialog>
+
     <div class="toast" id="toast" role="status" hidden></div>
     <script type="module" src="/static/app.js"></script>
   </body>

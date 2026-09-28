@@ -248,9 +248,11 @@
     "setup.intro": "Some models are missing from Ollama. Download them to get started (this happens only once).",
     "setup.ollama_down": "Ollama is not responding at {url}. Install and start Ollama (https://ollama.com), then check again.",
     "setup.pull": "Download models",
+    "setup.installed": "installed",
     "setup.pulling": "Downloading {model}… {p}%",
     "setup.done": "Models ready.",
     "setup.failed": "Could not download {model}: {error}",
+    "setup.restart_hint": "Restart the server so the context window is sized for your GPU.",
 
     "auth.title": "Sign in",
     "auth.username": "Username",

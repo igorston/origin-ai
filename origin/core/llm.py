@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -186,6 +187,15 @@ class LLMEngine:
             retry=RetryPolicy.from_settings(settings),
             locale=settings.origin_locale,
         )
+
+    def with_memory(
+        self, memory: VectorMemory | None, tools: Mapping[str, BaseTool] | None
+    ) -> "LLMEngine":
+        """The same engine (and chat models) over another workspace's memory and tools."""
+        clone = copy.copy(self)
+        clone.memory = memory
+        clone.tools = dict(tools or {})
+        return clone
 
     def _bind_tools(
         self, use_tools: bool

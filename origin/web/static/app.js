@@ -1,4 +1,4 @@
-import { api, ApiError, streamChat } from "./api.js";
+import { api, ApiError, pullModels, streamChat } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
 import { brand, formatDateTime, formatNumber, languages, locale, setLanguage, t, translatePage } from "./i18n.js";
 
@@ -140,7 +140,10 @@ async function refreshHealth() {
   let health = null;
   try {
     health = await api.health();
-    if (health.status !== "ok") setHealth("bad", t("health.degraded"), t("health.degraded_hint"));
+    if (health.status !== "ok") {
+      setHealth("bad", t("health.degraded"), t("health.degraded_hint"));
+      maybeOpenSetup(health.ollama);
+    }
     else if (!health.ready) setHealth("warn", t("health.loading"), t("health.loading_hint"));
     else setHealth("ok", t("health.online"), t("health.online_hint"));
   } catch {
@@ -947,6 +950,74 @@ function autoResize() {
   el.input.style.overflowY = el.input.scrollHeight > INPUT_MAX_HEIGHT ? "auto" : "hidden";
 }
 
+// ---------------------------------------------------------------- first-run setup
+
+let setupShown = false;
+
+function maybeOpenSetup(ollama) {
+  const missing = Object.values(ollama.models || {}).some((installed) => !installed);
+  if (setupShown || !(missing || !ollama.reachable)) return;
+  setupShown = true;
+  renderSetup(ollama);
+  openDialog($("#setup-dialog"));
+}
+
+function renderSetup(ollama) {
+  $("#setup-text").textContent = ollama.reachable ? t("setup.intro") : t("setup.ollama_down", { url: ollama.url });
+  $("#setup-pull").hidden = !ollama.reachable;
+  $("#setup-error").hidden = true;
+  setChildren($("#setup-models"),
+    Object.entries(ollama.models || {}).map(([name, installed]) =>
+      h("li", { class: "setup-model", "data-model": name },
+        h("span", { class: `badge ${installed ? "ok" : "bad"}` }, installed ? t("setup.installed") : t("system.model_missing")),
+        " ", h("code", {}, name),
+        installed ? null : h("progress", { max: 100, hidden: true }),
+        h("span", { class: "muted small setup-progress" }))));
+}
+
+async function runSetup() {
+  const button = $("#setup-pull");
+  const error = $("#setup-error");
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    for await (const { event, data } of pullModels()) {
+      const row = data.model && $(`#setup-models [data-model="${CSS.escape(data.model)}"]`);
+      if (event === "progress" && row) {
+        const bar = row.querySelector("progress");
+        bar.hidden = data.percent == null;
+        if (data.percent != null) bar.value = data.percent;
+        row.querySelector(".setup-progress").textContent =
+          data.percent != null ? t("setup.pulling", { model: data.model, p: data.percent }) : data.status;
+      } else if (event === "model_done" && row) {
+        row.querySelector(".badge").className = "badge ok";
+        row.querySelector(".badge").textContent = t("setup.installed");
+        row.querySelector("progress")?.remove();
+        row.querySelector(".setup-progress").textContent = "";
+      } else if (event === "error") {
+        throw new Error(t("setup.failed", { model: data.model || "Ollama", error: data.detail }));
+      } else if (event === "done") {
+        toast(`${t("setup.done")} ${t("setup.restart_hint")}`, "info");
+      }
+    }
+  } catch (err) {
+    error.textContent = describeError(err);
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    refreshHealth();
+  }
+}
+
+async function recheckSetup() {
+  try {
+    renderSetup(await api.setupStatus());
+  } catch (error) {
+    toast(describeError(error));
+  }
+  refreshHealth();
+}
+
 // ---------------------------------------------------------------- brand
 
 /** Names, logo, welcome screen, links and the language picker, from the brand. */
@@ -1020,7 +1091,10 @@ el.health.addEventListener("click", () => openSettings("system"));
 $("#refresh-health").addEventListener("click", refreshHealth);
 el.settingsDialog.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => selectTab(tab.dataset.tab)));
 
-for (const dialog of [el.memoryDialog, el.settingsDialog]) {
+$("#setup-pull").addEventListener("click", runSetup);
+$("#setup-recheck").addEventListener("click", recheckSetup);
+
+for (const dialog of [el.memoryDialog, el.settingsDialog, $("#setup-dialog")]) {
   dialog.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
   // Click on the backdrop (outside the dialog box) closes it.
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });

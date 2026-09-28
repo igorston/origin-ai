@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11-3.13 evaluate annotations eagerly (3.14 does not): test them all.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      # Integration tests skip themselves without a local Ollama.
+      - run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t origin-ai:ci .
+      - name: The image starts and serves the interface
+        run: |
+          docker run -d --name origin -p 8000:8000 -e OLLAMA_WARMUP=false origin-ai:ci
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/api/brand && break; sleep 2; done
+          curl -sf http://127.0.0.1:8000/ | grep -q "<title>Origin</title>"
+          docker logs origin

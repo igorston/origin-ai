@@ -16,20 +16,18 @@ from fastapi import FastAPI
 
 from origin import __version__
 from origin.api.errors import register_error_handlers
-from origin.api.routes import calibration, chat, health, memory, sessions, tools
+from origin.api.routes import calibration, chat, health, memory, sessions, setup, tools
 from origin.branding import get_brand
 from origin.config import get_settings
 from origin.core import LLMEngine, make_chat_model
 from origin.core.capacity import capacity_for
 from origin.core.context import ContextBudget, ContextManager, ConversationSummarizer
 from origin.core.ollama import check_ollama, warmup
-from origin.integrations import ToolContext, ToolRegistry
 from origin.memory import VectorMemory
-from origin.memory.calibration import CalibrationStore, MemoryCalibrator, Thresholds
-from origin.memory.curator import MemoryCurator
 from origin.memory.storage import SessionStore
 from origin.retry import RetryPolicy
 from origin.web import mount_web
+from origin.workspace import Workspaces
 
 settings = get_settings()
 brand = get_brand(settings)
@@ -48,46 +46,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a fixed window and no warmup (tests), which is when nothing may touch Ollama.
     probing = settings.ollama_num_ctx == "auto" or settings.ollama_warmup
     capacity = await asyncio.to_thread(capacity_for, settings) if probing else None
-    app.state.memory = VectorMemory.from_settings(settings)
     app.state.sessions = SessionStore(settings.sqlite_path)
     judge = make_chat_model(settings, temperature=0)
-    app.state.curator = MemoryCurator(
-        app.state.memory,
-        judge,
-        settings.memory_conflict_threshold,
-        retry=RetryPolicy.from_settings(settings),
+    ollama = await check_ollama(settings)
+    # One workspace per user when authentication is on; the default one otherwise.
+    app.state.workspaces = Workspaces(
+        settings, VectorMemory.from_settings(settings), judge, LLMEngine.from_settings(settings)
     )
-    registry = (
-        ToolRegistry.discover(
-            ToolContext(settings, app.state.memory, llm=judge, curator=app.state.curator),
-            disabled=settings.tools_disabled,
-        )
-        if settings.tools_enabled
-        else ToolRegistry()
-    )
-    engine = LLMEngine.from_settings(settings, memory=app.state.memory, tools=registry.tools)
-    app.state.engine = engine
-
-    def apply_thresholds(thresholds: Thresholds) -> None:
-        # Every component that reads a memory threshold, updated in place.
-        app.state.memory.dedup_threshold = thresholds.dedup
-        app.state.curator.conflict_threshold = thresholds.conflict
-        engine.memory_min_score = thresholds.min_score
-
-    app.state.calibrator = MemoryCalibrator(
-        app.state.memory,
-        judge=app.state.curator,
-        store=CalibrationStore(settings.calibration_path),
-        embed_model=settings.ollama_embed_model,
-        chat_model=settings.ollama_model,
-        defaults=Thresholds(
-            dedup=settings.memory_dedup_threshold,
-            conflict=settings.memory_conflict_threshold,
-            min_score=settings.memory_min_score,
-        ),
-        apply=apply_thresholds,
-        backup_dir=settings.memory_backup_dir,
-    )
+    default = await app.state.workspaces.get(probe=ollama.healthy)
+    engine = default.engine
     app.state.context = ContextManager(
         ContextBudget.from_settings(settings),
         ConversationSummarizer(
@@ -103,19 +70,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         __version__,
         settings.ollama_model,
         settings.ollama_embed_model,
-        app.state.memory.count(),
-        ",".join(registry.tools) or "none",
+        default.memory.count(),
+        ",".join(engine.tools) or "none",
     )
 
-    ollama = await check_ollama(settings)
     if not ollama.reachable:
         logger.warning("Ollama is not reachable at %s; chat will fail until it is", ollama.url)
     elif missing := [name for name, ok in ollama.models.items() if not ok]:
         logger.warning("Missing Ollama models: %s (run `ollama pull <model>`)", ", ".join(missing))
-    await app.state.calibrator.bootstrap(probe=ollama.healthy)
 
     async def warm_and_measure() -> None:
-        await warmup(settings, [engine.model, engine.router, judge], app.state.memory)
+        await warmup(settings, [engine.model, engine.router, judge], default.memory)
         try:
             app.state.context.base_tokens = await engine.measure_base_tokens()
             logger.info(
@@ -150,6 +115,7 @@ app.include_router(sessions.router)
 app.include_router(calibration.router)
 app.include_router(memory.router)
 app.include_router(tools.router)
+app.include_router(setup.router)
 mount_web(app)
 
 

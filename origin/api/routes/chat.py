@@ -20,6 +20,7 @@ from origin.core.context import (
     estimate_tokens,
 )
 from origin.memory.storage import Session, SessionStore, StoredMessage
+from origin.workspace import DEFAULT, Workspace
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -52,8 +53,18 @@ class ChatResponse(BaseModel):
     trimmed: int = 0  # client-sent history: oldest messages dropped to fit
 
 
+def get_workspace(request: Request) -> Workspace:
+    """The caller's workspace (set by the auth middleware; the default one without auth)."""
+    workspace = getattr(request.state, "workspace", None)
+    return workspace or request.app.state.workspaces.get_loaded(DEFAULT)
+
+
+def get_owner(request: Request) -> str:
+    return get_workspace(request).id
+
+
 def get_engine(request: Request) -> LLMEngine:
-    return request.app.state.engine
+    return get_workspace(request).engine
 
 
 def get_sessions(request: Request) -> SessionStore:

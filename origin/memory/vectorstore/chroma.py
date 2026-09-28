@@ -101,6 +101,10 @@ class VectorMemory:
             )
         return len(records)
 
+    def sibling(self, collection: str) -> "VectorMemory":
+        """Another collection on the same client and embeddings (one per workspace)."""
+        return type(self)(self.embeddings, self._client, collection, self.dedup_threshold)
+
     @classmethod
     def from_settings(cls, settings: Settings) -> "VectorMemory":
         client = chromadb.PersistentClient(

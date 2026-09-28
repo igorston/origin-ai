@@ -248,9 +248,11 @@
     "setup.intro": "Faltam modelos no Ollama. Baixe-os para começar (isso é feito uma vez só).",
     "setup.ollama_down": "O Ollama não está respondendo em {url}. Instale e inicie o Ollama (https://ollama.com) e verifique de novo.",
     "setup.pull": "Baixar modelos",
+    "setup.installed": "instalado",
     "setup.pulling": "Baixando {model}… {p}%",
     "setup.done": "Modelos prontos.",
     "setup.failed": "Não foi possível baixar {model}: {error}",
+    "setup.restart_hint": "Reinicie o servidor para que a janela de contexto seja calculada para a sua GPU.",
 
     "auth.title": "Entrar",
     "auth.username": "Usuário",
