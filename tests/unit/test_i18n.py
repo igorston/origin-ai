@@ -50,8 +50,10 @@ def test_every_catalog_has_the_same_keys_and_placeholders(locale: str, section: 
 
 
 def test_every_key_the_interface_uses_exists() -> None:
-    html = (STATIC / "index.html").read_text(encoding="utf-8")
-    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    html = "".join(
+        (STATIC / name).read_text(encoding="utf-8") for name in ("index.html", "login.html")
+    )
+    js = "".join((STATIC / name).read_text(encoding="utf-8") for name in ("app.js", "login.js"))
     used = set(re.findall(r'data-i18n="([\w.]+)"', html))
     used |= {
         key

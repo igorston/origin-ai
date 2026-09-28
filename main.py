@@ -16,7 +16,10 @@ from fastapi import FastAPI
 
 from origin import __version__
 from origin.api.errors import register_error_handlers
-from origin.api.routes import calibration, chat, health, memory, sessions, setup, tools
+from origin.api.routes import auth, calibration, chat, health, memory, sessions, setup, tools
+from origin.auth import UserStore, bootstrap_admin
+from origin.auth.middleware import AuthMiddleware
+from origin.auth.tokens import secret_key
 from origin.branding import get_brand
 from origin.config import get_settings
 from origin.core import LLMEngine, make_chat_model
@@ -47,6 +50,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     probing = settings.ollama_num_ctx == "auto" or settings.ollama_warmup
     capacity = await asyncio.to_thread(capacity_for, settings) if probing else None
     app.state.sessions = SessionStore(settings.sqlite_path)
+    if settings.origin_auth != "off":
+        app.state.users = UserStore(settings.sqlite_path)
+        app.state.auth_key = secret_key(settings)
+        bootstrap_admin(settings, app.state.users)
     judge = make_chat_model(settings, temperature=0)
     ollama = await check_ollama(settings)
     # One workspace per user when authentication is on; the default one otherwise.
@@ -109,6 +116,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 register_error_handlers(app)
+app.add_middleware(AuthMiddleware)
+app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(sessions.router)

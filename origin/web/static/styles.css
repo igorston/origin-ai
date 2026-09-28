@@ -643,3 +643,25 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: 
 .setup-models { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .setup-model { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .setup-model progress { flex: 1 1 160px; height: 8px; accent-color: var(--accent); }
+
+/* ------------------------------------------------------------ accounts */
+
+.account { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 0; }
+.login-page { min-height: 100vh; display: grid; place-items: center; background: var(--bg); padding: 16px; }
+.login-card {
+  width: min(360px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-card h1 { margin: 0; font-size: 18px; }
+.login-card form { display: flex; flex-direction: column; gap: 12px; }
+.login-logo { margin: 0; font-size: 20px; }
+.login-logo img { height: 28px; }
+.field-label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.field-label .field { width: 100%; }

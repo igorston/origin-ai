@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from origin import __version__
@@ -61,7 +61,7 @@ def _theme_css(brand: Brand) -> str:
     return "\n".join(css)
 
 
-def render_index(settings: Settings) -> str:
+def render_index(settings: Settings, user: dict | None = None, page: str = "index.html") -> str:
     brand = get_brand(settings)
     locale = app_locale(settings)
     boot = {
@@ -70,10 +70,12 @@ def render_index(settings: Settings) -> str:
         "locale": locale,
         "languages": languages(),
         "messages": {name: catalog["web"] for name, catalog in catalogs().items()},
+        "auth": settings.origin_auth,
+        "user": user,
     }
     # Inside <script type="application/json">: "</" must not close the tag.
     boot_json = json.dumps(boot, ensure_ascii=False).replace("</", "<\\/")
-    page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html_page = (STATIC_DIR / page).read_text(encoding="utf-8")
     replacements = {
         "{{lang}}": html.escape(locale),
         "{{title}}": html.escape(brand.product_name),
@@ -82,8 +84,8 @@ def render_index(settings: Settings) -> str:
         "{{boot}}": boot_json,
     }
     for placeholder, value in replacements.items():
-        page = page.replace(placeholder, value)
-    return page
+        html_page = html_page.replace(placeholder, value)
+    return html_page
 
 
 def mount_web(app: FastAPI) -> None:
@@ -98,9 +100,19 @@ def mount_web(app: FastAPI) -> None:
         return FileResponse(path, headers={"Cache-Control": "no-cache"})
 
     @app.get("/", include_in_schema=False)
-    async def index() -> HTMLResponse:
+    async def index(request: Request) -> HTMLResponse:
         # no-cache: always revalidate, so UI edits show up on a plain reload.
-        return HTMLResponse(render_index(get_settings()), headers={"Cache-Control": "no-cache"})
+        user = getattr(request.state, "user", None)
+        page = render_index(get_settings(), user.public() if user else None)
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/login", include_in_schema=False, response_model=None)
+    async def login_page() -> HTMLResponse | RedirectResponse:
+        settings = get_settings()
+        if settings.origin_auth == "off":
+            return RedirectResponse("/", status_code=303)
+        page = render_index(settings, page="login.html")
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/brand", tags=["system"])
     async def brand() -> dict:

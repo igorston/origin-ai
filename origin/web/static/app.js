@@ -1,6 +1,6 @@
 import { api, ApiError, pullModels, streamChat } from "./api.js";
 import { renderMarkdown } from "./markdown.js";
-import { brand, formatDateTime, formatNumber, languages, locale, setLanguage, t, translatePage } from "./i18n.js";
+import { brand, formatDateTime, formatNumber, languages, locale, setLanguage, t, translatePage, user } from "./i18n.js";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -956,7 +956,8 @@ let setupShown = false;
 
 function maybeOpenSetup(ollama) {
   const missing = Object.values(ollama.models || {}).some((installed) => !installed);
-  if (setupShown || !(missing || !ollama.reachable)) return;
+  // Only admins may download models onto a shared server.
+  if (setupShown || !(missing || !ollama.reachable) || (user && !user.is_admin)) return;
   setupShown = true;
   renderSetup(ollama);
   openDialog($("#setup-dialog"));
@@ -1045,6 +1046,17 @@ function applyBrand() {
   picker.addEventListener("change", () => setLanguage(picker.value));
 
   el.input.placeholder = t("chat.placeholder");
+
+  // Accounts (ORIGIN_AUTH=password): who is signed in, and a way out.
+  const account = $("#account");
+  account.hidden = !user;
+  if (user) {
+    setChildren(account,
+      h("span", { class: "muted small", title: t("auth.signed_in_as", { user: user.username }) }, `👤 ${user.username}`),
+      h("button", { class: "link", type: "button", onclick: async () => {
+        try { await api.logout(); } finally { location.assign("/login"); }
+      } }, t("auth.logout")));
+  }
 }
 
 // ---------------------------------------------------------------- wiring

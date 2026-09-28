@@ -67,7 +67,12 @@ def says_date(target: date, weekday_required: bool = False) -> "Check":
         )
         year_ok = target.year == TODAY.year or str(target.year) in text
         correct = WEEKDAYS_PT[target.weekday()]
-        mentioned = [w for w in WEEKDAYS_PT if w in text]
+        # Only the sentences naming the target date: "Ontem foi 27, domingo. Hoje é 28,
+        # segunda-feira." is right, and today's weekday must not count against it.
+        about_target = [
+            s for s in re.split(r"(?<=[.!?])\s+", text) if re.search(rf"\b0?{target.day}\b", s)
+        ]
+        mentioned = [w for w in WEEKDAYS_PT if any(w in s for s in about_target)]
         weekday_ok = all(w == correct for w in mentioned) and (
             correct in mentioned or not weekday_required
         )

@@ -44,6 +44,8 @@ MIGRATIONS = {
         ("status", "TEXT NOT NULL DEFAULT 'open'"),
         ("closed_reason", "TEXT NOT NULL DEFAULT ''"),
         ("parent_id", "TEXT NOT NULL DEFAULT ''"),  # session this one continues
+        # Workspace that owns it ("" without authentication, or for the first user).
+        ("owner", "TEXT NOT NULL DEFAULT ''"),
     ],
     "messages": [("tokens", "INTEGER NOT NULL DEFAULT 0")],
 }
@@ -68,6 +70,7 @@ class Session(BaseModel):
     status: Status = "open"
     closed_reason: str = ""
     parent_id: str = ""
+    owner: str = ""
 
 
 class StoredMessage(BaseModel):
@@ -121,7 +124,7 @@ class SessionStore:
 
     # --- sync implementations -------------------------------------------------
 
-    def _create(self, title: str, parent_id: str, summary: str) -> Session:
+    def _create(self, title: str, parent_id: str, summary: str, owner: str) -> Session:
         now = _now()
         session = Session(
             id=uuid4().hex,
@@ -130,12 +133,14 @@ class SessionStore:
             updated_at=now,
             parent_id=parent_id,
             summary=summary,
+            owner=owner,
         )
         with self._connect() as db:
             db.execute(
-                "INSERT INTO sessions (id, title, created_at, updated_at, parent_id, summary)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (session.id, session.title, now, now, parent_id, summary),
+                "INSERT INTO sessions"
+                " (id, title, created_at, updated_at, parent_id, summary, owner)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session.id, session.title, now, now, parent_id, summary, owner),
             )
         return session
 
@@ -149,10 +154,11 @@ class SessionStore:
             row = db.execute(f"{self._SELECT} WHERE s.id = ?", (session_id,)).fetchone()
         return Session(**row) if row else None
 
-    def _list(self, limit: int) -> list[Session]:
+    def _list(self, limit: int, owner: str) -> list[Session]:
         with self._connect() as db:
             rows = db.execute(
-                f"{self._SELECT} ORDER BY s.updated_at DESC LIMIT ?", (limit,)
+                f"{self._SELECT} WHERE s.owner = ? ORDER BY s.updated_at DESC LIMIT ?",
+                (owner, limit),
             ).fetchall()
         return [Session(**row) for row in rows]
 
@@ -215,14 +221,20 @@ class SessionStore:
 
     # --- async API ------------------------------------------------------------
 
-    async def create(self, title: str = "", parent_id: str = "", summary: str = "") -> Session:
-        return await asyncio.to_thread(self._create, title, parent_id, summary)
+    async def create(
+        self, title: str = "", parent_id: str = "", summary: str = "", owner: str = ""
+    ) -> Session:
+        return await asyncio.to_thread(self._create, title, parent_id, summary, owner)
 
-    async def get(self, session_id: str) -> Session | None:
-        return await asyncio.to_thread(self._get, session_id)
+    async def get(self, session_id: str, owner: str | None = None) -> Session | None:
+        """The session; None if missing or, with `owner`, if someone else's."""
+        session = await asyncio.to_thread(self._get, session_id)
+        if session is None or (owner is not None and session.owner != owner):
+            return None
+        return session
 
-    async def list(self, limit: int = 50) -> list[Session]:
-        return await asyncio.to_thread(self._list, limit)
+    async def list(self, limit: int = 50, owner: str = "") -> list[Session]:
+        return await asyncio.to_thread(self._list, limit, owner)
 
     async def delete(self, session_id: str) -> bool:
         return await asyncio.to_thread(self._delete, session_id)

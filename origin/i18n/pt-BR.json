@@ -11,7 +11,12 @@
     "calibration.dedup_overlap": "Paráfrases e fatos diferentes se sobrepõem neste modelo de embeddings: algumas duplicatas não serão mescladas.",
     "calibration.recall_overlap": "Perguntas relevantes e irrelevantes se sobrepõem: algumas memórias sem relação podem entrar no contexto.",
     "calibration.false_replacements": "O modelo de chat arquivaria {count} fato(s) ainda verdadeiro(s) (ver relatório). As memórias arquivadas podem ser restauradas, mas considere outro modelo de chat.",
-    "calibration.weak_judge": "O modelo de chat reconhece poucas contradições: fatos desatualizados tendem a permanecer ativos."
+    "calibration.weak_judge": "O modelo de chat reconhece poucas contradições: fatos desatualizados tendem a permanecer ativos.",
+    "auth.required": "Entre para continuar.",
+    "auth.failed": "Usuário ou senha incorretos.",
+    "auth.too_many": "Muitas tentativas. Tente de novo em alguns minutos.",
+    "auth.admin_only": "Só administradores podem fazer isso.",
+    "auth.cross_origin": "Requisição de outra origem recusada."
   },
   "web": {
     "brand.welcome_title": "Converse com {assistant}",
@@ -259,6 +264,7 @@
     "auth.password": "Senha",
     "auth.submit": "Entrar",
     "auth.failed": "Usuário ou senha incorretos.",
+    "auth.throttled": "Muitas tentativas. Tente de novo em alguns minutos.",
     "auth.logout": "Sair",
     "auth.signed_in_as": "Conectado como {user}"
   }

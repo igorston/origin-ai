@@ -16,6 +16,8 @@ export const locale = boot.messages[storedLanguage()] ? storedLanguage() : boot.
 export const brand = boot.brand;
 export const languages = boot.languages;
 export const version = boot.version;
+/** Signed-in user ({username, is_admin}) with ORIGIN_AUTH=password; null otherwise. */
+export const user = boot.user;
 const messages = boot.messages[locale] || {};
 const fallback = boot.messages.en || {};
 

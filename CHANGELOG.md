@@ -1,0 +1,38 @@
+# Changelog
+
+Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
+
+## [0.1.0] - não lançada
+
+Primeira versão pública.
+
+### Assistente
+- Engine sobre Ollama e LangChain, com streaming (texto e SSE) e um turno de roteamento que decide as ferramentas antes da resposta.
+- Tools plugáveis: data e hora, dias até uma data, datas relativas (com a conta feita em código), lembrar e esquecer.
+- Memória de longo prazo em Chroma (bge-m3):
+  - deduplicação, substituição de fatos desatualizados e recuperação pelo contexto da conversa;
+  - gerenciador na interface, com curadoria por IA ao editar;
+  - calibração e reindexação quando o modelo muda.
+- Histórias e poemas: um escritor dedicado planeja a história e escreve uma cena por vez, com título e capítulos, e remove repetições.
+- Proteção contra troca de alfabeto: trechos em chinês, japonês ou coreano são traduzidos no meio do streaming.
+
+### Contexto
+- Medidor de contexto em relação à janela real, com a reserva para a resposta marcada.
+- Janela automática, calculada pelo limite do modelo e pela VRAM (`OLLAMA_NUM_CTX=auto`).
+- Otimização automática: as mensagens antigas viram um resumo em seções.
+  - Os fatos do usuário e os textos escritos são preservados literalmente.
+  - Os assuntos só são condensados quando isso libera espaço.
+- A conversa só é encerrada quando o conteúdo preservado não cabe mais na janela. Depois disso, ela continua numa conversa nova, que leva o resumo.
+
+### White label
+- Marca configurável (`brand/brand.json`): nomes, logo, favicon, cores, persona, textos iniciais e links.
+- Interface e mensagens do servidor em pt-BR e en. Um idioma novo é um arquivo novo em `origin/i18n/`.
+
+### Distribuição
+- Configuração inicial na interface, que baixa os modelos que faltam.
+- Instaladores para Windows e Linux/macOS, imagem Docker e Docker Compose (CPU e GPU NVIDIA).
+- Contas opcionais (`ORIGIN_AUTH=password`):
+  - login, gerenciamento de usuários pela linha de comando;
+  - conversas e memórias isoladas por usuário;
+  - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
+- CI com os testes em Python 3.11 a 3.14 e o build da imagem.

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="{{lang}}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{title}}</title>
+    <link rel="icon" href="{{favicon}}" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style id="brand-theme">{{theme}}</style>
+    <script id="boot" type="application/json">{{boot}}</script>
+  </head>
+  <body class="login-page">
+    <main class="login-card">
+      <p class="logo login-logo" id="brand-logo"></p>
+      <h1 data-i18n="auth.title"></h1>
+      <form id="login-form" method="post" action="/login" autocomplete="on">
+        <label class="field-label">
+          <span data-i18n="auth.username"></span>
+          <input class="field" id="username" name="username" autocomplete="username" required autofocus />
+        </label>
+        <label class="field-label">
+          <span data-i18n="auth.password"></span>
+          <input class="field" id="password" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <p class="error-text" id="login-error" role="alert" hidden></p>
+        <button class="button primary block" type="submit" data-i18n="auth.submit"></button>
+      </form>
+    </main>
+    <script type="module" src="/static/login.js"></script>
+  </body>
+</html>

@@ -10,6 +10,8 @@ export class ApiError extends Error {
 }
 
 async function apiError(response) {
+  // Signed out (or the session expired) with authentication on: back to the login page.
+  if (response.status === 401) location.assign("/login");
   try {
     const { detail } = await response.json();
     if (typeof detail === "string") return new ApiError(response.status, detail);
@@ -39,6 +41,7 @@ export const api = {
   createSession: (title = "") => request("POST", "/sessions", { title }),
   deleteSession: (id) => request("DELETE", `/sessions/${id}`),
   continueSession: (id) => request("POST", `/sessions/${id}/continue`),
+  logout: () => request("POST", "/api/auth/logout"),
 
   memories: (limit = 500) => request("GET", `/memory?limit=${limit}`),
   searchMemory: (q, k = 10) =>

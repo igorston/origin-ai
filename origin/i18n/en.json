@@ -11,7 +11,12 @@
     "calibration.dedup_overlap": "Paraphrases and different facts overlap with this embedding model: some duplicates will not be merged.",
     "calibration.recall_overlap": "Relevant and irrelevant questions overlap: some unrelated memories may enter the context.",
     "calibration.false_replacements": "The chat model would archive {count} still-true fact(s) (see the report). Archived memories can be restored, but consider another chat model.",
-    "calibration.weak_judge": "The chat model recognizes few contradictions: outdated facts tend to stay active."
+    "calibration.weak_judge": "The chat model recognizes few contradictions: outdated facts tend to stay active.",
+    "auth.required": "Sign in to continue.",
+    "auth.failed": "Wrong username or password.",
+    "auth.too_many": "Too many attempts. Try again in a few minutes.",
+    "auth.admin_only": "Only administrators can do that.",
+    "auth.cross_origin": "Cross-origin request refused."
   },
   "web": {
     "brand.welcome_title": "Chat with {assistant}",
@@ -259,6 +264,7 @@
     "auth.password": "Password",
     "auth.submit": "Sign in",
     "auth.failed": "Wrong username or password.",
+    "auth.throttled": "Too many attempts. Try again in a few minutes.",
     "auth.logout": "Sign out",
     "auth.signed_in_as": "Signed in as {user}"
   }

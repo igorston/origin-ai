@@ -78,6 +78,7 @@ def get_context(request: Request) -> ContextManager:
 Engine = Annotated[LLMEngine, Depends(get_engine)]
 Sessions = Annotated[SessionStore, Depends(get_sessions)]
 Context = Annotated[ContextManager, Depends(get_context)]
+Owner = Annotated[str, Depends(get_owner)]
 
 
 @dataclass
@@ -134,7 +135,7 @@ async def persist_optimization(
 
 
 async def prepare_turn(
-    body: ChatRequest, sessions: SessionStore, context: ContextManager
+    body: ChatRequest, sessions: SessionStore, context: ContextManager, owner: str = ""
 ) -> PreparedTurn:
     """Fit the conversation into the context window before the model sees it."""
     if body.session_id is None:
@@ -143,7 +144,7 @@ async def prepare_turn(
             history=turns, trimmed=trimmed, before=context.usage("", turns, body.message)
         )
 
-    session = await sessions.get(body.session_id)
+    session = await sessions.get(body.session_id, owner)
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Session {body.session_id!r} not found")
     if session.status == "closed":
@@ -259,9 +260,9 @@ async def prefetch(events: AsyncIterator[T]) -> AsyncIterator[T]:
 
 @router.post("", response_model=ChatResponse)
 async def chat(
-    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context
+    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context, owner: Owner
 ) -> ChatResponse:
-    turn = await prepare_turn(body, sessions, context)
+    turn = await prepare_turn(body, sessions, context, owner)
     result = await engine.generate(
         body.message, turn.history, body.use_memory, body.use_tools, turn.summary
     )
@@ -318,10 +319,10 @@ async def run_and_persist(
 
 @router.post("/stream")
 async def chat_stream(
-    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context
+    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context, owner: Owner
 ) -> StreamingResponse:
     """Plain-text token stream (easy to consume with curl)."""
-    turn = await prepare_turn(body, sessions, context)
+    turn = await prepare_turn(body, sessions, context, owner)
 
     async def text_only() -> AsyncIterator[str]:
         async for event in run_and_persist(turn, body, engine, sessions, context):
@@ -337,11 +338,11 @@ def sse(event: str, data: object) -> str:
 
 @router.post("/events")
 async def chat_events(
-    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context
+    body: ChatRequest, engine: Engine, sessions: Sessions, context: Context, owner: Owner
 ) -> StreamingResponse:
     """Server-Sent Events: `context` (budget, and any optimization done), `tool_call`,
     `token`, then `done` with the context after the turn (or `error` mid-stream)."""
-    turn = await prepare_turn(body, sessions, context)
+    turn = await prepare_turn(body, sessions, context, owner)
     events = await prefetch(run_and_persist(turn, body, engine, sessions, context))
 
     async def encode() -> AsyncIterator[str]:

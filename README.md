@@ -25,6 +25,7 @@ Seus dados, seus modelos, sua máquina. O **Origin** é um núcleo de IA que rod
 - ⚡ **Vibe coding** — automação de código assistida por agentes e ferramentas.
 - 🔌 **Integrações de sistemas** — conecte APIs, arquivos e serviços como *tools* plugáveis.
 - 🧪 **Experimentação** — troque modelos, prompts e estratégias de memória sem reescrever o core.
+- 🏷️ **White label** — distribua com o seu nome, logo, cores, idioma e persona, sem mexer no código ([guia](docs/white-label.md)).
 
 ## Pré-requisitos
 
@@ -37,6 +38,24 @@ Seus dados, seus modelos, sua máquina. O **Origin** é um núcleo de IA que rod
 | GPU (opcional) | — | NVIDIA (CUDA) / Apple Silicon (Metal) acelera a inferência |
 
 ## Quickstart
+
+**Instalação guiada** (cria o ambiente, o `.env` e baixa os modelos):
+
+```bash
+git clone https://github.com/igorston/origin-ai.git && cd origin-ai
+sh scripts/install.sh                                          # Linux / macOS
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # Windows
+python main.py                                                 # ou .venv\Scripts\python.exe main.py
+```
+
+**Docker** (Origin + Ollama; a primeira tela baixa os modelos):
+
+```bash
+docker compose up -d                                                   # CPU
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # GPU NVIDIA
+```
+
+**Manual:**
 
 ```bash
 # 1. Clone
@@ -61,7 +80,7 @@ cp .env.example .env
 python main.py
 ```
 
-Abra **http://127.0.0.1:8000** no navegador para usar a interface web. A API continua disponível no mesmo endereço, com documentação interativa em `/docs` e healthcheck em `/health`.
+Abra **http://127.0.0.1:8000** no navegador para usar a interface web. Se faltar algum modelo, a tela de **configuração inicial** o baixa com barra de progresso. Para servir a outras pessoas (login, HTTPS, Docker), veja [docs/deployment.md](docs/deployment.md). A API continua disponível no mesmo endereço, com documentação interativa em `/docs` e healthcheck em `/health`.
 
 ### Interface web
 
@@ -108,6 +127,9 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
 | `/memory/{id}/restore` | POST | Restaura uma memória arquivada |
 | `/memory/stats` | GET | Total, ativas e arquivadas |
 | `/tools` | GET | Tools carregadas (nome, descrição, argumentos) |
+| `/api/brand` | GET | Marca em uso (nomes, logo, textos, links) e idioma |
+| `/setup/status` · `/setup/pull` | GET · POST | Modelos instalados no Ollama / baixa os que faltam (SSE com progresso) |
+| `/api/auth/login` · `/logout` · `/me` | POST · POST · GET | Contas (com `ORIGIN_AUTH=password`) |
 
 O corpo do chat aceita `message`, `use_memory` e `use_tools` (ambos com padrão `true`) e **uma** das formas de contexto:
 
@@ -367,6 +389,12 @@ pytest -m "not integration"
 ruff check . && ruff format --check .
 ```
 
+## White label, idiomas e contas
+
+- **Marca:** um arquivo `brand/brand.json` troca o nome do produto e do assistente, o logo, o favicon, as cores (claro e escuro), a persona, a tela inicial e os links. Sem o arquivo, é o Origin. Com um arquivo inválido, o log avisa e a marca padrão continua. A persona nunca vai para o navegador. Veja o [guia de white label](docs/white-label.md).
+- **Idiomas:** a interface e as mensagens do servidor vêm em pt-BR e en, e há um seletor em Configurações. Um idioma novo é um arquivo novo em `origin/i18n/`, e um teste confere que ele tem todas as chaves.
+- **Contas (opcional):** com `ORIGIN_AUTH=password`, há login, cada usuário tem as próprias conversas e memória, e os usuários são geridos com `python -m origin.auth`. O primeiro usuário herda os dados que já existiam. Veja [docs/deployment.md](docs/deployment.md) e [SECURITY.md](SECURITY.md).
+
 ## Arquitetura
 
 ```mermaid
@@ -390,6 +418,9 @@ flowchart LR
 | **Memória** | `origin/memory/` | Memória de curto prazo (conversa) e longo prazo (vetores + SQLite). |
 | **Integrações** | `origin/integrations/` | *Tools* e *connectors* plugáveis (APIs, filesystem, git, etc.). |
 | **Config** | `origin/config/` | Settings tipados via variáveis de ambiente. |
+| **Marca e idiomas** | `origin/branding.py`, `origin/i18n/` | White label (arquivo de marca) e catálogos de tradução. |
+| **Contas** | `origin/auth/`, `origin/workspace.py` | Login opcional e isolamento de memória e conversas por usuário. |
+| **Web** | `origin/web/` | Interface (HTML/CSS/JS puros), renderizada com a marca. |
 
 ```
 origin-ai/
@@ -423,12 +454,15 @@ origin-ai/
 - [x] Engine LLM com Ollama + streaming
 - [x] Memória vetorial local (Chroma)
 - [x] Sistema de tools plugáveis
+- [x] Interface web
+- [x] Contexto: medidor, otimização automática, janela pela VRAM
+- [x] White label, idiomas, contas opcionais
+- [x] Instaladores, Docker e CI
 - [ ] Agente de automação de código
-- [ ] CLI / interface web
 
 ## Contribuindo
 
-PRs são bem-vindos. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, ...) e garanta `pytest` e `ruff check .` passando.
+PRs são bem-vindos: veja o [CONTRIBUTING](CONTRIBUTING.md) (ambiente, testes, avaliações com os modelos reais e convenções). As mudanças de cada versão estão no [CHANGELOG](CHANGELOG.md), e vulnerabilidades devem ser reportadas pelo [SECURITY](SECURITY.md).
 
 ## Licença
 

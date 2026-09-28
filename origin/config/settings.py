@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     origin_locale: str = "en-US"
     # White-label brand file (names, logo, colors, persona); see brand/brand.example.json.
     origin_brand_path: str = "./brand/brand.json"
+    # Authentication. "off": single user, meant for 127.0.0.1 (the default). "password":
+    # accounts with separate conversations and memories, for a shared or exposed
+    # server (put HTTPS in front). Users: `python -m origin.auth add-user NAME --admin`,
+    # or ORIGIN_ADMIN_PASSWORD to create the first admin at startup.
+    origin_auth: Literal["off", "password"] = "off"
+    origin_admin_user: str = "admin"
+    origin_admin_password: str | None = None
+    # Signs the session cookies; generated and kept in the data folder when unset.
+    origin_secret_key: str | None = None
+    origin_session_days: int = 30
+    # Send the cookie only over HTTPS (set it when serving behind TLS).
+    origin_cookie_secure: bool = False
 
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:8b"
