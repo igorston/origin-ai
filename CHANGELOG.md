@@ -2,7 +2,7 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
-## [0.1.0] - não lançada
+## [0.1.0] - 2026-09-28
 
 Primeira versão pública.
 
@@ -15,6 +15,8 @@ Primeira versão pública.
   - gerenciador na interface, com curadoria por IA ao editar;
   - calibração e reindexação quando o modelo muda.
 - Histórias e poemas: um escritor dedicado planeja a história e escreve uma cena por vez, com título e capítulos, e remove repetições.
+- Respostas formatadas: títulos, listas (inclusive logo abaixo de um título), separadores e links clicáveis, também nas fontes.
+- Ao responder pelo que lembra, o assistente fala com o usuário ("você mora em..."), não como se fosse ele.
 - Proteção contra troca de alfabeto: trechos em chinês, japonês ou coreano são traduzidos no meio do streaming.
 
 ### Internet
@@ -39,9 +41,12 @@ Primeira versão pública.
 
 ### Distribuição
 - Configuração inicial na interface, que baixa os modelos que faltam.
+- A instalação padrão roda em modo `prod`; `ORIGIN_ENV=dev` liga o recarregamento automático para quem desenvolve.
 - Instaladores para Windows e Linux/macOS, imagem Docker e Docker Compose (CPU e GPU NVIDIA).
 - Contas opcionais (`ORIGIN_AUTH=password`):
   - login, gerenciamento de usuários pela linha de comando;
   - conversas e memórias isoladas por usuário;
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
+
+[0.1.0]: https://github.com/igorston/origin-ai/releases/tag/v0.1.0

@@ -54,7 +54,7 @@ CONTRADICTIONS = [
     ("Meu time favorito é o Sport.", "Meu time favorito é o Náutico."),
     ("Moro em Recife.", "Moro em São Paulo."),
     ("Eu moro em Recife.", "Moro em São Paulo."),
-    ("Trabalho na Stellar Gaming.", "Agora trabalho na Globant."),
+    ("Trabalho na Acme.", "Agora trabalho na Globant."),
     ("Tenho 34 anos.", "Tenho 35 anos."),
     ("Meu editor favorito é o Vim.", "Meu editor favorito é o VS Code."),
     ("I live in Lisbon.", "I live in Porto."),

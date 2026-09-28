@@ -366,25 +366,38 @@ CASES = [
     Case(
         "question",
         "Onde eu moro?",
-        [no_tools(), says("São Paulo")],
+        [no_tools(), says("São Paulo"), addresses_user()],
         seed=["Moro em São Paulo.", "Trabalho como engenheiro de software."],
     ),
     Case(
         "question",
         "Qual é o meu time do coração mesmo?",
-        [no_tools(), says("Sport")],
+        [no_tools(), says("Sport"), addresses_user()],
         seed=["Meu time favorito é o Sport.", "Moro em Recife."],
     ),
     Case(
         "question",
         "Onde eu moro e quantos dias faltam pro Natal?",
-        [no_remember(), called("days_until"), says("São Paulo"), number(DAYS_TO_XMAS)],
+        [
+            no_remember(),
+            called("days_until"),
+            says("São Paulo"),
+            number(DAYS_TO_XMAS),
+            addresses_user(),
+        ],
         seed=["Moro em São Paulo."],
     ),
     Case(
         "question",
+        "Onde eu moro e pra que time eu torço?",
+        # Memories are stored in the user's words; the reply must not answer as the user.
+        [no_tools(), says("Recife"), says("Náutico"), addresses_user()],
+        seed=["Moro em Recife.", "Meu time favorito é o Náutico."],
+    ),
+    Case(
+        "question",
         "Você lembra o nome da minha esposa?",
-        [no_tools(), says("Ana")],
+        [no_tools(), says("Ana"), addresses_user()],
         seed=["Minha esposa se chama Ana."],
     ),
     # memory hygiene: no duplicates, contradictions replace old facts, explicit forgetting

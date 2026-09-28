@@ -8,7 +8,7 @@ Obrigado pelo interesse! Issues e pull requests são bem-vindos.
 git clone https://github.com/igorston/origin-ai.git && cd origin-ai
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-cp .env.example .env
+cp .env.example .env                              # e mude para ORIGIN_ENV=dev: reinicia a cada alteração
 ollama pull qwen3:8b && ollama pull bge-m3        # para rodar de verdade e os testes de integração
 ```
 

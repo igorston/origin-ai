@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    origin_env: Literal["dev", "prod", "test"] = "dev"
+    origin_env: Literal["dev", "prod", "test"] = "prod"  # dev: auto-reload
     origin_host: str = "127.0.0.1"
     origin_port: int = 8000
     origin_log_level: str = "INFO"

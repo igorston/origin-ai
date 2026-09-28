@@ -4,6 +4,7 @@
 
 **A fundação open source para assistentes de IA pessoais — 100% local, modular e sua.**
 
+[![CI](https://github.com/igorston/origin-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/igorston/origin-ai/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?logo=langchain&logoColor=white)](https://www.langchain.com/)
@@ -13,19 +14,37 @@
 [![Status](https://img.shields.io/badge/status-experimental-orange)](#roadmap)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/igorston/origin-ai/pulls)
 
+<img src="docs/images/origin-chat.png" alt="O Origin guardando fatos na memória, contando dias até o Natal e respondendo pelo que lembra" width="900">
+
 </div>
 
 ---
 
 ## Por que Origin?
 
-Seus dados, seus modelos, sua máquina. O **Origin** é um núcleo de IA que roda inteiramente offline sobre LLMs locais (via Ollama), sem enviar um byte para a nuvem. Ele foi pensado como **sandbox de experimentação** e **fundação modular** para:
+Seus dados, seus modelos, sua máquina. O **Origin** é um núcleo de IA que roda inteiramente na sua máquina, sobre LLMs locais (via Ollama): conversas, memória e modelos não vão para a nuvem. O acesso à internet é opcional e fica desligado até você ligar. Ele foi pensado como **sandbox de experimentação** e **fundação modular** para:
 
 - 🤖 **Assistentes pessoais** com memória de longo prazo local (vetores + banco).
 - ⚡ **Vibe coding** — automação de código assistida por agentes e ferramentas.
 - 🔌 **Integrações de sistemas** — conecte APIs, arquivos e serviços como *tools* plugáveis.
 - 🧪 **Experimentação** — troque modelos, prompts e estratégias de memória sem reescrever o core.
 - 🏷️ **White label** — distribua com o seu nome, logo, cores, idioma e persona, sem mexer no código ([guia](docs/white-label.md)).
+
+## Veja em ação
+
+| Pesquisa na web, com leitura da página e fontes | Medidor de contexto, calculado pela VRAM |
+| :---: | :---: |
+| <img src="docs/images/origin-web-top.png" alt="Explicação da MP das Bets a partir de uma pesquisa na web" width="440"> | <img src="docs/images/origin-context.png" alt="Painel de contexto com a janela calculada pela VRAM" width="440"> |
+| **Memória de longo prazo, editável** | **Tema escuro** |
+| <img src="docs/images/origin-memory.png" alt="Gerenciador de memória" width="440"> | <img src="docs/images/origin-chat-dark.png" alt="A interface no tema escuro" width="440"> |
+
+**White label:** o mesmo código, com outro `brand.json` (nome, logo, cores, persona e tela inicial):
+
+| | |
+| :---: | :---: |
+| <img src="docs/images/aurora-welcome.png" alt="A marca de exemplo Aurora, tela inicial" width="440"> | <img src="docs/images/aurora-chat-dark.png" alt="A marca de exemplo Aurora, no tema escuro" width="440"> |
+
+> Capturas feitas com qwen3:8b numa RTX 4070 Laptop (8 GB).
 
 ## Quickstart
 
@@ -604,6 +623,7 @@ origin-ai/
 - [x] Contexto: medidor, otimização automática, janela pela VRAM
 - [x] White label, idiomas, contas opcionais
 - [x] Instaladores, Docker e CI
+- [x] Acesso à internet opcional para o agente
 - [ ] Agente de automação de código
 
 ## Contribuindo
