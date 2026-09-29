@@ -12,6 +12,8 @@ import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 
+from origin.i18n.packs import rule
+
 logger = logging.getLogger(__name__)
 
 # Kana, CJK ideographs and punctuation, Hangul, fullwidth forms.
@@ -20,12 +22,7 @@ FOREIGN_CHAR = re.compile(f"[{_FOREIGN}]")
 # A run may contain spaces between foreign characters, never ends in one, and takes the
 # spaces before it (so they can go if the run is dropped: "o 巫师, disse" -> "o, disse").
 FOREIGN_RUN = re.compile(f" *[{_FOREIGN}](?:[{_FOREIGN}\\s]*[{_FOREIGN}])?")
-LANGUAGE_TOPIC = re.compile(
-    r"\b(chin[eê]s|mandarim|canton[eê]s|japon[eê]s|coreano|kanji|hiragana|katakana|hangul|"
-    r"ideogram\w*|idioma\w*|l[ií]ngua\w*|tradu\w*|chinese|mandarin|japanese|korean|"
-    r"language\w*|translat\w*|chino)\b",
-    re.IGNORECASE,
-)
+LANGUAGE_TOPIC = rule("language_topic")
 CONTEXT_CHARS = 300
 # A replacement much longer than the fragment is the model answering instead of fixing.
 MAX_GROWTH = 8

@@ -23,6 +23,7 @@ from langchain_core.language_models import BaseChatModel
 
 from origin.core.context import estimate_tokens
 from origin.core.script_guard import ScriptGuard
+from origin.i18n.packs import alternatives, packs, rule
 from origin.prompts import load_prompt
 from origin.retry import DEFAULT_POLICY, RetryPolicy, call_with_retry
 
@@ -33,32 +34,24 @@ Length = Literal["short", "normal", "long"]
 
 # --------------------------------------------------------------- request detection
 
-_STORY = (
-    r"hist[oó]ri(?:a|nha)s?|contos?|f[aá]bulas?|lendas?|cr[oô]nicas?|narrativas?|"
-    r"aventuras?|stor(?:y|ies)|tales?|cuentos?"
-)
-_POEM = r"poemas?|poesias?|sonetos?|versos|poems?|sonnets?"
-_EN_VERBS = r"write|tell|create|make|give"
-_VERBS = (
-    r"crie|cria|criar|escreva|escreve|escrever|invente|inventa|inventar|conte|conta|contar|"
-    r"fa[cç]a|faz|fazer|gere|gera|gerar|narre|narra|imagine|quero|queria|escribe|cuenta|"
-    rf"crea|{_EN_VERBS}"
-)
+_STORY = alternatives("writer.story")
+_POEM = alternatives("writer.poem")
+# English "a" is also a Portuguese preposition ("conte a história"): an article only
+# after an English verb.
+_EN_VERBS = "|".join(packs()["en"].patterns.get("writer.verbs", [])) if "en" in packs() else "(?!)"
+_VERBS = alternatives("writer.verbs")
+_ARTICLES = alternatives("writer.articles")
 # "conte a história do Brasil" is history, "conte uma história" is a story: only
 # indefinite articles count (English "a" only after an English verb).
 NEW_PIECE = re.compile(
     rf"\b(?P<verb>{_VERBS})\b(?:\s+\w+){{0,3}}?\s+"
-    r"(?P<article>um|uma|uns|umas|outr[ao]|mais\s+uma|an?|some|un|una)\s+"
+    rf"(?P<article>{_ARTICLES})\s+"
     rf"(?:\w+\s+){{0,2}}?(?P<kind>{_STORY}|{_POEM})\b",
     re.IGNORECASE,
 )
-CONTINUE = re.compile(
-    r"\b(continu[ae]\w*|pr[oó]xim[ao]\s+(?:cap[ií]tulo|parte)|segunda\s+parte|parte\s+2|"
-    r"keep\s+going|next\s+chapter|contin[uú]a)\b",
-    re.IGNORECASE,
-)
-SHORT = re.compile(r"\b(curt[ao]s?|pequen[ao]s?|breve|short|brief|corto|corta)\b", re.I)
-LONG = re.compile(r"\b(long[ao]s?|grande|detalhad[ao]|extens[ao]|long|larga)\b", re.I)
+CONTINUE = rule("writer.continue")
+SHORT = rule("writer.short")
+LONG = rule("writer.long")
 
 
 @dataclass
@@ -111,9 +104,9 @@ PREVIOUS_CHARS = 1800
 SCENE_TOKENS = 1100
 
 LABEL = r"^\W*(?:{})\W*:?\s*(.*)$"
-TITLE_LINE = re.compile(LABEL.format(r"TITLE|T[IÍ]TULO"), re.I | re.M)
-CHARS_LINE = re.compile(LABEL.format(r"CHARACTERS|PERSONAGENS|PERSONAJES"), re.I | re.M)
-SCENES_LINE = re.compile(LABEL.format(r"SCENES|CENAS|ESCENAS"), re.I | re.M)
+TITLE_LINE = re.compile(LABEL.format(alternatives("writer.title_label")), re.I | re.M)
+CHARS_LINE = re.compile(LABEL.format(alternatives("writer.characters_label")), re.I | re.M)
+SCENES_LINE = re.compile(LABEL.format(alternatives("writer.scenes_label")), re.I | re.M)
 SCENE_ITEM = re.compile(r"^\s*\**\s*(\d+)[.)]\s*(.+?)\s*\|\s*(.+?)\s*$", re.M)
 
 

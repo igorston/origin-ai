@@ -1,0 +1,110 @@
+[
+ [
+  "### 3. **Valores**\n- um\n- dois",
+  "<h5>3. <strong>Valores</strong></h5><ul><li>um</li><li>dois</li></ul>"
+ ],
+ [
+  "# Título",
+  "<h3>Título</h3>"
+ ],
+ [
+  "#### Quatro",
+  "<h6>Quatro</h6>"
+ ],
+ [
+  "texto\n- item",
+  "<p>texto</p><ul><li>item</li></ul>"
+ ],
+ [
+  "linha 1\nlinha 2",
+  "<p>linha 1<br>linha 2</p>"
+ ],
+ [
+  "1. a\n2. b\n\n- c",
+  "<ol><li>a</li><li>b</li></ol><ul><li>c</li></ul>"
+ ],
+ [
+  "1. a\n\n2. b",
+  "<ol><li>a</li><li>b</li></ol>"
+ ],
+ [
+  "3. c\n4. d",
+  "<ol start=\"3\"><li>c</li><li>d</li></ol>"
+ ],
+ [
+  "- a\n\ntexto",
+  "<ul><li>a</li></ul><p>texto</p>"
+ ],
+ [
+  "antes\n\n---\n\ndepois",
+  "<p>antes</p><hr><p>depois</p>"
+ ],
+ [
+  "- item\n  continua",
+  "<ul><li>item<br>continua</li></ul>"
+ ],
+ [
+  "- a\n    - b\n- c",
+  "<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>"
+ ],
+ [
+  "1. a\n   - b\n   - c\n2. d",
+  "<ol><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ol>"
+ ],
+ [
+  "- a\n  - b\n    - c\n- d",
+  "<ul><li>a<ul><li>b<ul><li>c</li></ul></li></ul></li><li>d</li></ul>"
+ ],
+ [
+  "**Fontes:**\n1. https://example.com/a?x=1&y=2.",
+  "<p><strong>Fontes:</strong></p><ol><li><a href=\"https://example.com/a?x=1&amp;y=2\" target=\"_blank\" rel=\"noopener noreferrer\">https://example.com/a?x=1&amp;y=2</a>.</li></ol>"
+ ],
+ [
+  "[site](https://example.com)",
+  "<p><a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">site</a></p>"
+ ],
+ [
+  "`https://x.com`",
+  "<p><code>https://x.com</code></p>"
+ ],
+ [
+  "<script>alert(1)</script>",
+  "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>"
+ ],
+ [
+  "```py\nx = 1\n```",
+  "<pre><code>x = 1</code></pre>"
+ ],
+ [
+  "#hashtag sem espaço",
+  "<p>#hashtag sem espaço</p>"
+ ],
+ [
+  "-5 graus",
+  "<p>-5 graus</p>"
+ ],
+ [
+  "| Plano | Preço |\n|---|---:|\n| **Pro** | R$ 10 |\n| Free |",
+  "<div class=\"table-wrap\"><table><thead><tr><th>Plano</th><th style=\"text-align:right\">Preço</th></tr></thead><tbody><tr><td><strong>Pro</strong></td><td style=\"text-align:right\">R$ 10</td></tr><tr><td>Free</td><td style=\"text-align:right\"></td></tr></tbody></table></div>"
+ ],
+ [
+  "Veja:\n| A | B |\n| :-: | - |\n| 1 | 2 | 3 |\n\nFim.",
+  "<p>Veja:</p><div class=\"table-wrap\"><table><thead><tr><th style=\"text-align:center\">A</th><th>B</th></tr></thead><tbody><tr><td style=\"text-align:center\">1</td><td>2</td></tr></tbody></table></div><p>Fim.</p>"
+ ],
+ [
+  "a | b\nc | d",
+  "<p>a | b<br>c | d</p>"
+ ],
+ [
+  "Coluna A | Coluna B\n--- | ---\nx | y",
+  "<div class=\"table-wrap\"><table><thead><tr><th>Coluna A</th><th>Coluna B</th></tr></thead><tbody><tr><td>x</td><td>y</td></tr></tbody></table></div>"
+ ],
+ [
+  "- item\n\n| A | B |\n|---|---|\n| 1 | 2 |",
+  "<ul><li>item</li></ul><div class=\"table-wrap\"><table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table></div>"
+ ],
+ [
+  "texto | x\n---\ndepois",
+  "<p>texto | x</p><hr><p>depois</p>"
+ ]
+]

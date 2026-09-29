@@ -215,8 +215,15 @@ async def finish_turn(
         usage.output_tokens if usage and usage.output_tokens else estimate_tokens(answer)
     )
     # input_tokens=0: the answer came from prompts other than the conversation (the writer),
-    # so there is no measurement of the context to keep.
-    measured = usage.input_tokens + usage.output_tokens if usage and usage.input_tokens else None
+    # so there is no measurement of the context to keep. After tools, the measurement also
+    # counted their results (a fetched page, search results), which the next turn does not
+    # carry: one web question showed the context 76% full and calibrated the estimates on
+    # it. Those turns are estimated instead.
+    measured = (
+        usage.input_tokens + usage.output_tokens
+        if usage and usage.input_tokens and not tool_calls
+        else None
+    )
     if turn.session is not None:
         await sessions.append(turn.session.id, "user", body.message, tokens=user_tokens)
         await sessions.append(

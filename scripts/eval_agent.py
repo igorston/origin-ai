@@ -524,7 +524,10 @@ async def run_case(
         if not meta.get("archived")
     ]
     # Every case: the reply must not just parrot the user's message back.
-    echoed = normalize(result.text).startswith(normalize(case.message))
+    # Greetings are answered in kind ("Oi, tudo bem?" -> "Oi! Tudo bem com você?"): only a
+    # longer message repeated back is parroting.
+    message = normalize(case.message)
+    echoed = len(message.split()) >= 4 and normalize(result.text).startswith(message)
     return not echoed and all(check(result, memories) for check in case.checks), elapsed, result
 
 

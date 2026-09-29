@@ -2,6 +2,27 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [0.3.0] - 2026-09-29
+
+### Corrigido
+- O medidor de contexto não conta mais o resultado das ferramentas: depois de uma pesquisa na web, a página lida entrava na medição, o medidor mostrava 76% e as estimativas eram calibradas por esse número. Turnos com ferramentas passam a ser estimados.
+- Acesso à web: a conexão vai para o endereço que foi conferido como público, e não para uma segunda consulta ao DNS. Um domínio que respondesse público na conferência e interno na conexão (*DNS rebinding*) passava pela proteção. O certificado continua conferido pelo nome do site.
+- Números de lei com mais de um dígito ("lei 14.790", "PL 2338", "ley 27.430") não disparavam a pesquisa obrigatória.
+- Importar `origin.memory.curator` antes do resto do pacote falhava por importação circular.
+- O exemplo da tool `remember` usa marcadores ("Meu time favorito é o <time>."): com um nome real, o modelo às vezes salvava o exemplo no lugar do fato do usuário.
+
+### Interface
+- Tabelas nas respostas, com alinhamento por coluna e rolagem horizontal quando largas.
+- Listas aninhadas por indentação.
+
+### Idiomas
+- Pacotes de idioma em `origin/i18n/agent/` (pt, en, es): instruções de resposta, reconhecimento do idioma e as frases que o agente reconhece (pesquisa obrigatória, pedidos de explicação, memória, histórias). Um idioma novo é um arquivo, sem mexer no código. As regras antigas foram transcritas sem mudança de comportamento, conferido em 1.463 frases dos testes e da avaliação.
+
+### Qualidade
+- Testes de interface num navegador real (Playwright, `pytest -m e2e`), com o modelo simulado, também no CI.
+- Roteiro de lançamento no CONTRIBUTING.
+- A avaliação não reprova mais respostas a saudações curtas que começam repetindo a saudação.
+
 ## [0.2.0] - 2026-09-29
 
 ### Extensões
@@ -59,5 +80,6 @@ Primeira versão pública.
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
 
+[0.3.0]: https://github.com/igorston/origin-ai/releases/tag/v0.3.0
 [0.2.0]: https://github.com/igorston/origin-ai/releases/tag/v0.2.0
 [0.1.0]: https://github.com/igorston/origin-ai/releases/tag/v0.1.0

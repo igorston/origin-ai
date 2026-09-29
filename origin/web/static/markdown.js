@@ -21,57 +21,109 @@ function inline(text) {
 }
 
 const HEADING = /^\s*(#{1,6})\s+(.*?)\s*#*\s*$/;
-const ITEM = /^\s*([-*+]|\d+[.)])\s+(.*)$/;
+const ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
+// A table's second line: | --- | :---: | ---: |
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+const indentOf = (spaces) => spaces.replace(/\t/g, "    ").length;
+
+function cells(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+// A header row, then a rule with as many columns (GFM): "x | y" over "---" is a paragraph
+// and a horizontal rule, not a table.
+const isTable = (line, next = "") =>
+  line.includes("|") && TABLE_RULE.test(next) && next.includes("-") && cells(next).length === cells(line).length;
+
+function table(lines) {
+  const align = cells(lines[1]).map((c) =>
+    c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : "",
+  );
+  const row = (line, tag) => {
+    const values = cells(line);
+    // Every row has the header's columns: missing cells are blank, extra ones dropped.
+    return `<tr>${align
+      .map((a, i) => `<${tag}${a ? ` style="text-align:${a}"` : ""}>${inline(values[i] ?? "")}</${tag}>`)
+      .join("")}</tr>`;
+  };
+  const body = lines.slice(2).map((line) => row(line, "td")).join("");
+  // Wide tables scroll inside the bubble instead of stretching it.
+  return `<div class="table-wrap"><table><thead>${row(lines[0], "th")}</thead><tbody>${body}</tbody></table></div>`;
+}
 
 // Line by line: models put a heading right above its list ("### 3. Valores\n- ..."), so
-// headings, list items and rules are recognized on any line, not only as whole paragraphs.
+// headings, list items, rules and tables are recognized on any line, not only as whole
+// paragraphs. Lists nest by indentation.
 function blocks(text) {
   const out = [];
-  let list = null;
+  const lists = []; // open lists, outermost first: {kind, indent}
   let paragraph = [];
   const closeList = () => {
-    if (list) out.push(`</${list}>`);
-    list = null;
+    const { kind } = lists.pop();
+    out.push(`</li></${kind}>`);
+  };
+  const closeLists = () => {
+    while (lists.length) closeList();
   };
   const closeParagraph = () => {
     if (paragraph.length) out.push(`<p>${paragraph.map(inline).join("<br>")}</p>`);
     paragraph = [];
   };
-  for (const line of text.split("\n")) {
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const heading = line.match(HEADING);
     const item = !heading && line.match(ITEM);
     if (!line.trim()) {
       closeParagraph(); // a list stays open: items split by blank lines are still one list
+    } else if (isTable(line, lines[i + 1])) {
+      closeParagraph();
+      closeLists();
+      const rows = [line, lines[i + 1]];
+      for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim(); i++) rows.push(lines[i]);
+      i--; // the for loop steps past the last row
+      out.push(table(rows));
     } else if (heading) {
       closeParagraph();
-      closeList();
+      closeLists();
       const level = Math.min(heading[1].length + 2, 6); // chat headings stay small: h3..h6
       out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
     } else if (RULE.test(line)) {
       closeParagraph();
-      closeList();
+      closeLists();
       out.push("<hr>");
     } else if (item) {
       closeParagraph();
-      const kind = /^\d/.test(item[1]) ? "ol" : "ul";
-      if (list !== kind) {
-        closeList();
-        const start = kind === "ol" ? parseInt(item[1], 10) : 1;
+      const indent = indentOf(item[1]);
+      const kind = /^\d/.test(item[2]) ? "ol" : "ul";
+      while (lists.length && lists.at(-1).indent > indent) closeList();
+      const top = lists.at(-1);
+      if (top && top.indent === indent && top.kind !== kind) closeList();
+      if (!lists.length || indent > lists.at(-1).indent) {
+        // A new list; deeper than the open one, it nests inside its current item.
+        const start = kind === "ol" ? parseInt(item[2], 10) : 1;
         out.push(start > 1 ? `<ol start="${start}">` : `<${kind}>`);
-        list = kind;
+        lists.push({ kind, indent });
+      } else {
+        out.push("</li>");
       }
-      out.push(`<li>${inline(item[2])}</li>`);
-    } else if (list && /^\s{2,}\S/.test(line)) {
-      // A wrapped continuation of the last item.
-      out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, `<br>${inline(line.trim())}</li>`);
+      out.push(`<li>${inline(item[3])}`);
+    } else if (lists.length && /^\s{2,}\S/.test(line)) {
+      out.push(`<br>${inline(line.trim())}`); // a wrapped continuation of the item
     } else {
-      closeList();
+      closeLists();
       paragraph.push(line);
     }
   }
   closeParagraph();
-  closeList();
+  closeLists();
   return out.join("");
 }
 

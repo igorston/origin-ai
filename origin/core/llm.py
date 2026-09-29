@@ -38,6 +38,7 @@ from origin.core.context import JSON_CHARS_PER_TOKEN, estimate_tokens
 from origin.core.language import LANGUAGE_NAMES, detect_language, reply_instruction
 from origin.core.script_guard import ScriptGuard, guard_needed
 from origin.core.writer import StoryWriter, writing_task
+from origin.i18n.packs import alternatives
 from origin.integrations.web import (
     READ_FAILED,
     needs_live_data,
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 RECALL_CONTEXT_CHARS = 500
 
 
-CLAUSE_BOUNDARY = re.compile(r"[?!.;,]+|\s+(?:e|and|y|mas|but)\s+", re.IGNORECASE)
+CLAUSE_BOUNDARY = re.compile(rf"[?!.;,]+|\s+(?:{alternatives('clause_joiners')})\s+", re.IGNORECASE)
 
 
 def split_clauses(message: str) -> list[str]:

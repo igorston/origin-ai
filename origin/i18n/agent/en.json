@@ -1,0 +1,161 @@
+{
+  "name": "English",
+  "short_name": "English",
+  "sources_label": "Sources",
+  "reply": "[Reply to the user in English, in one or two direct sentences, addressing them as \"you\" — never as if you were the user.]",
+  "reply_detailed": "[Reply to the user in English, addressing them as \"you\" — never as if you were the user. Match the length to the request: one sentence to confirm an action; a complete, organized explanation when they ask you to explain something.]",
+  "stopwords": [
+    "about",
+    "am",
+    "and",
+    "are",
+    "can",
+    "days",
+    "do",
+    "does",
+    "have",
+    "hello",
+    "hi",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "many",
+    "my",
+    "now",
+    "of",
+    "please",
+    "remember",
+    "thanks",
+    "that",
+    "the",
+    "to",
+    "today",
+    "until",
+    "what",
+    "when",
+    "where",
+    "you",
+    "your"
+  ],
+  "markers": "",
+  "filler_words": [
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "now",
+    "have",
+    "has",
+    "was",
+    "are",
+    "not",
+    "but",
+    "from",
+    "into",
+    "just",
+    "also",
+    "very",
+    "moved",
+    "changed",
+    "switched",
+    "job"
+  ],
+  "clause_joiners": [
+    "and",
+    "but"
+  ],
+  "live_data": [
+    "weather",
+    "forecast",
+    "exchange rate",
+    "stock price",
+    "latest news",
+    "who won"
+  ],
+  "explain": [
+    "explain",
+    "tell me about",
+    "how does",
+    "what does .* mean"
+  ],
+  "current_affairs": [
+    "bill",
+    "executive order",
+    "supreme court"
+  ],
+  "additive": [
+    "also",
+    "too",
+    "as well"
+  ],
+  "claims_remember": [
+    "saved",
+    "noted",
+    "i'?ll remember",
+    "i will remember",
+    "remembered"
+  ],
+  "claims_forget": [
+    "deleted",
+    "removed",
+    "forgot(ten)?"
+  ],
+  "save_intent": [
+    "remember\\s+that",
+    "note\\s+that",
+    "save"
+  ],
+  "language_topic": [
+    "chinese",
+    "mandarin",
+    "japanese",
+    "korean",
+    "language\\w*",
+    "translat\\w*"
+  ],
+  "writer": {
+    "verbs": [
+      "write",
+      "tell",
+      "create",
+      "make",
+      "give"
+    ],
+    "articles": [
+      "an?",
+      "some"
+    ],
+    "story": [
+      "stor(?:y|ies)",
+      "tales?"
+    ],
+    "poem": [
+      "poems?",
+      "sonnets?"
+    ],
+    "continue": [
+      "keep\\s+going",
+      "next\\s+chapter"
+    ],
+    "short": [
+      "short",
+      "brief"
+    ],
+    "long": [
+      "long"
+    ],
+    "title_label": [
+      "TITLE"
+    ],
+    "characters_label": [
+      "CHARACTERS"
+    ],
+    "scenes_label": [
+      "SCENES"
+    ]
+  }
+}

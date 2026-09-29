@@ -1,0 +1,107 @@
+{
+  "name": "Spanish",
+  "short_name": "Spanish",
+  "sources_label": "Fuentes",
+  "reply": "[Responde al usuario en español, en una o dos frases directas, hablándole de \"tú\", nunca como si fueras el usuario. No mezcles palabras en inglés.]",
+  "reply_detailed": "[Responde al usuario en español, hablándole de \"tú\", nunca como si fueras el usuario. Usa la extensión que pide la solicitud: una frase para confirmar una acción; una explicación completa y organizada cuando pide explicar un tema. No mezcles palabras en inglés.]",
+  "stopwords": [
+    "ahora",
+    "como",
+    "cuándo",
+    "cuántos",
+    "cómo",
+    "dónde",
+    "el",
+    "es",
+    "estoy",
+    "explica",
+    "faltan",
+    "favor",
+    "gracias",
+    "hola",
+    "hoy",
+    "la",
+    "las",
+    "los",
+    "me",
+    "mi",
+    "muy",
+    "por",
+    "qué",
+    "recuerda",
+    "sobre",
+    "soy",
+    "también",
+    "tengo",
+    "tú",
+    "usted",
+    "y"
+  ],
+  "markers": "ñ¿¡",
+  "filler_words": [
+    "del",
+    "los",
+    "las",
+    "con",
+    "una",
+    "mis",
+    "ahora",
+    "cambie"
+  ],
+  "clause_joiners": [
+    "y"
+  ],
+  "live_data": [
+    "precio de",
+    "tipo de cambio",
+    "el tiempo en"
+  ],
+  "explain": [
+    "expl[íi]came",
+    "cu[ée]ntame"
+  ],
+  "current_affairs": [
+    "ley (n[º°.]?\\s?)?\\d+(\\.\\d+)*"
+  ],
+  "additive": [
+    "adem[áa]s"
+  ],
+  "claims_remember": [],
+  "claims_forget": [],
+  "save_intent": [],
+  "language_topic": [
+    "chino"
+  ],
+  "writer": {
+    "verbs": [
+      "escribe",
+      "cuenta",
+      "crea"
+    ],
+    "articles": [
+      "un",
+      "una"
+    ],
+    "story": [
+      "cuentos?"
+    ],
+    "poem": [],
+    "continue": [
+      "contin[uú]a"
+    ],
+    "short": [
+      "corto",
+      "corta"
+    ],
+    "long": [
+      "larga"
+    ],
+    "title_label": [],
+    "characters_label": [
+      "PERSONAJES"
+    ],
+    "scenes_label": [
+      "ESCENAS"
+    ]
+  }
+}

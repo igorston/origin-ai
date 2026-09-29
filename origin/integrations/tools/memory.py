@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 from langchain_core.tools import BaseTool, tool
 
+from origin.i18n.packs import alternatives
 from origin.memory.curator import CurationResult, MemoryCurator
 from origin.retry import RetryPolicy
 
@@ -12,10 +13,7 @@ if TYPE_CHECKING:
 MEMORY_ID = re.compile(r"^[0-9a-f]{32}$")
 # A description must match a stored memory at least this well to be forgotten.
 FORGET_MIN_SCORE = 0.6
-EXPLICIT_SAVE_INTENT = (
-    r"\b(lembr(e|a|ar)\s+(de\s+)?que|anot|guard|salv|registr|n[ãa]o\s+esque[cç]|"
-    r"remember\s+that|note\s+that|save)"
-)
+EXPLICIT_SAVE_INTENT = rf"\b({alternatives('save_intent')})"
 
 
 def get_tools(ctx: "ToolContext") -> list[BaseTool]:
@@ -29,6 +27,8 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         retry=RetryPolicy.from_settings(ctx.settings),
     )
 
+    # The examples below use placeholders: with a real name ("o Náutico") the model saved
+    # the example itself instead of what the user had just said.
     @tool
     async def remember(fact: str) -> str:
         """Save something about the user to long-term memory.
@@ -43,8 +43,9 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         Never use it for questions or requests for advice (answer those instead), general
         knowledge, or facts about the world. "Lembra que <fato>" is not a question.
         `fact` must be a short, self-contained sentence stating the CURRENT fact from the
-        user's perspective, in the user's language: "Meu time favorito é o Náutico." — not
-        "Mudei de time, agora torço pro Náutico."; "Moro em São Paulo." — not "Me mudei...".
+        user's perspective, in the user's own words and language: "Meu time favorito é o
+        <time>." — not "Mudei de time, agora torço pro <time>."; "Moro em <cidade>." — not
+        "Me mudei pra <cidade>...".
         Call it once per distinct fact.
         """
         # The agent already writes a clean fact, so no normalization pass here (latency);

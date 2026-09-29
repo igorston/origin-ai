@@ -286,6 +286,11 @@ a { color: var(--accent); }
 .content h4 { font-size: 15px; }
 .content h5, .content h6 { font-size: 14px; }
 .content hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+.content li > ul, .content li > ol { margin: 4px 0 0; }
+.content .table-wrap { overflow-x: auto; margin: 0 0 8px; }
+.content table { border-collapse: collapse; font-size: 14px; }
+.content th, .content td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.content th { background: var(--code-bg); font-weight: 600; }
 .content a { color: var(--accent); overflow-wrap: anywhere; }
 
 .error-text { color: var(--danger); margin: 6px 0 0; font-size: 14px; }

@@ -15,6 +15,7 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
 from origin.core.language import detect_language
+from origin.i18n.packs import packs, rule
 from origin.memory.vectorstore import MemoryHit, MemoryRecord, MetadataValue, VectorMemory
 from origin.prompts import load_prompt
 from origin.retry import DEFAULT_POLICY, RetryPolicy, call_with_retry
@@ -25,27 +26,15 @@ MAX_FACTS = 10
 
 # Words that may legitimately disappear when a note is rewritten ("eu", "agora", ...).
 # Accent-folded, since comparison happens on folded text.
-STOPWORDS = {
-    # pt
-    "que", "com", "como", "para", "pra", "por", "uma", "umas", "uns", "dos", "das", "nos",
-    "nas", "meu", "minha", "meus", "minhas", "seu", "sua", "tem", "tenho", "sou", "agora",
-    "mas", "mais", "muito", "tambem", "isso", "esse", "essa", "este", "esta", "aqui", "ali",
-    "entao", "estou", "sao", "foi", "ser", "ter", "vou", "vai", "sobre", "quando", "onde",
-    # en
-    "the", "and", "for", "with", "that", "this", "now", "have", "has", "was", "are", "not",
-    "but", "from", "into", "just", "also", "very",
-    # es
-    "del", "los", "las", "con", "una", "mis", "ahora",
-    # Change words: the rules say to keep the current state ("mudei de emprego, agora
-    # trabalho na X" -> "Trabalho na X."), so the transition itself may be dropped.
-    "mudei", "mudou", "mudamos", "troquei", "trocou", "emprego", "antes", "moved",
-    "changed", "switched", "job", "cambie",
-}  # fmt: skip
+# The change words ("mudei", "moved") are among them: the rules say to keep the current
+# state ("mudei de emprego, agora trabalho na X" -> "Trabalho na X."), so the transition
+# itself may be dropped. From the language packs' filler_words.
+STOPWORDS = frozenset().union(*(pack.filler_words for pack in packs().values()))
 
-LANGUAGE_NAMES = {"pt": "Portuguese", "en": "English", "es": "Spanish"}
+LANGUAGE_NAMES = {code: pack.short_name for code, pack in packs().items()}
 
 # "Agora também gosto de X" adds to what is known; the judge sometimes read it as a change.
-ADDITIVE = re.compile(r"\b(tamb[ée]m|also|too|as well|adem[áa]s)\b", re.IGNORECASE)
+ADDITIVE = rule("additive")
 # The judge names what each sentence is about before answering: "A: ... | B: ... | NO".
 VERDICT = re.compile(r"\b(YES|NO)\b")
 

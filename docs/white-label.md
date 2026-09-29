@@ -53,6 +53,24 @@ Para adicionar um idioma:
 
 O idioma aparece sozinho no seletor em Configurações. Cada navegador guarda a sua escolha. As respostas do assistente seguem o idioma em que o usuário escreve, qualquer que seja o da interface.
 
+### O agente no novo idioma
+
+O catálogo traduz as telas. O que o agente sabe de cada idioma fica num **pacote**, em `origin/i18n/agent/<código de 2 letras>.json`. Hoje há pacotes para `pt`, `en` e `es`. Um pacote tem:
+
+| Campo | Para quê |
+| --- | --- |
+| `name`, `short_name` | Como o idioma é nomeado para o modelo ("Brazilian Portuguese") |
+| `reply`, `reply_detailed` | A instrução de resposta, escrita no próprio idioma: curta após ações, e com a extensão do pedido após a web |
+| `stopwords`, `markers` | Palavras frequentes e letras exclusivas (ã, ñ), para reconhecer o idioma da mensagem |
+| `sources_label` | O título da lista de fontes ("Fontes") |
+| `live_data`, `current_affairs` | Frases que sempre geram uma pesquisa (cotação, clima, leis, tribunais) |
+| `explain` | Pedidos de explicação, que leem a página do melhor resultado |
+| `additive` | "Também": um fato que soma, sem substituir o anterior |
+| `claims_remember`, `claims_forget`, `save_intent` | Frases de salvar e apagar memórias |
+| `clause_joiners`, `language_topic`, `writer` | Divisão de perguntas compostas, assuntos de idioma e pedidos de histórias e poemas |
+
+Os campos de frases são listas de expressões regulares, uma alternativa por item. Cada regra junta os itens de todos os pacotes, então o agente entende a mensagem em qualquer idioma, seja qual for o da interface. Sem pacote, o agente ainda responde no idioma do usuário, mas sem essas regras. Rode `pytest tests/unit/test_packs.py` para conferir o pacote novo.
+
 ## 3. Modelos
 
 Os modelos são configuráveis (`OLLAMA_MODEL`, `OLLAMA_EMBED_MODEL`). Ao trocar de modelo:

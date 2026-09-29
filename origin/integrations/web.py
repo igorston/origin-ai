@@ -4,7 +4,10 @@ Everything the model asks for goes through here, so the safety rules live in one
 - Only http(s), and only public addresses: every host (and every redirect hop) is
   resolved and refused if it is loopback, private, link-local or reserved. Without
   this, a page or a user could make the agent read the local Ollama, the router's admin
-  page or a cloud metadata endpoint (SSRF). WEB_ALLOW_PRIVATE lifts it for intranets.
+  page or a cloud metadata endpoint (SSRF). The connection then goes to the address that
+  was checked, not to a second lookup: a name that answers public for the check and
+  private for the connection (DNS rebinding) would slip through otherwise.
+  WEB_ALLOW_PRIVATE lifts it for intranets.
 - Size and time limits, text content types only.
 - What comes back is reduced to plain text and labelled as untrusted: web pages are
   data for the answer, never instructions (prompt injection).
@@ -26,6 +29,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 import httpx
 
 from origin.config import Settings
+from origin.i18n.packs import packs, rule
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +59,41 @@ class SearchResult:
 # ---------------------------------------------------------------- address safety
 
 
-async def check_public(url: str, allow_private: bool = False) -> None:
+async def check_public(url: str, allow_private: bool = False) -> str | None:
+    """The public address to connect to for `url` (None when private ones are allowed:
+    then the client resolves as usual). Every address the name resolves to must be
+    public, not only the first."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise WebError(f"only http(s) URLs can be read: {url!r}")
     if allow_private:
-        return
+        return None
     host = parts.hostname
     try:
         infos = await asyncio.to_thread(socket.getaddrinfo, host, parts.port or 443)
     except socket.gaierror as exc:
         raise WebError(f"could not resolve {host}") from exc
-    for info in infos:
-        address = ipaddress.ip_address(info[4][0])
+    addresses = [ipaddress.ip_address(info[4][0]) for info in infos]
+    for address in addresses:
         if not address.is_global or address.is_multicast:
             raise WebError(f"{host} is a private or local address; it cannot be read")
+    if not addresses:
+        raise WebError(f"could not resolve {host}")
+    return str(addresses[0])
+
+
+def pinned(url: str, address: str | None) -> tuple[str, dict[str, str], dict[str, str]]:
+    """(URL, headers, extensions) that reach `url` at `address`: the host is replaced by
+    the address, and the name goes in the Host header and, for https, in the TLS SNI, so
+    the server and its certificate are still checked against the name."""
+    if address is None:
+        return url, {}, {}
+    parts = urlsplit(url)
+    ip = f"[{address}]" if ":" in address else address
+    netloc = f"{ip}:{parts.port}" if parts.port else ip
+    host = f"{parts.hostname}:{parts.port}" if parts.port else parts.hostname
+    extensions = {"sni_hostname": parts.hostname} if parts.scheme == "https" else {}
+    return parts._replace(netloc=netloc).geturl(), {"Host": host}, extensions
 
 
 # ---------------------------------------------------------------- HTML to text
@@ -148,8 +172,11 @@ class WebClient:
         """(final URL, title, text) of a public page."""
         async with self._client() as client:
             for _ in range(MAX_REDIRECTS + 1):
-                await check_public(url, self.settings.web_allow_private)
-                async with client.stream("GET", url) as response:
+                address = await check_public(url, self.settings.web_allow_private)
+                target, headers, extensions = pinned(url, address)
+                async with client.stream(
+                    "GET", target, headers=headers, extensions=extensions
+                ) as response:
                     if response.is_redirect and "location" in response.headers:
                         url = urljoin(url, response.headers["location"])
                         continue
@@ -166,9 +193,9 @@ class WebClient:
                     encoding = response.encoding or "utf-8"
                     raw = bytes(body[:MAX_BYTES]).decode(encoding, errors="replace")
                     if kind in ("text/plain", "application/json", "text/markdown"):
-                        return str(response.url), "", raw.strip()
+                        return url, "", raw.strip()
                     title, text = html_to_text(raw)
-                    return str(response.url), title, text
+                    return url, title, text
             raise WebError(f"too many redirects from {url}")
 
     async def search(self, query: str, limit: int) -> list[SearchResult]:
@@ -225,25 +252,12 @@ RESULT_LINE = re.compile(r"^(\d+)\. .*\n\s+(https?://\S+)", re.M)
 # Data that changes by the hour: a model that answers these from memory invents them.
 # Asked for the dollar rate "hoje", qwen3:8b called the clock tool and replied
 # "R$ 5,20" — so with internet access on, these always get a search.
-LIVE_DATA = re.compile(
-    r"\b(cota[çc][ãa]o|c[âa]mbio|pre[çc]o (atual|de hoje|hoje)|quanto (custa|est[áa]) "
-    r"(o|a|hoje)|previs[ãa]o do tempo|vai chover|clima (em|de|hoje|amanh[ãa])|"
-    r"temperatura (em|de|hoje|agora)|not[íi]cias?|placar|quem ganhou|resultado d[oa]s? "
-    r"(jogo|partida|elei[çc])|bolsa de valores|ibovespa|a[çc][õo]es d[aeo]|bitcoin|"
-    r"weather|forecast|exchange rate|stock price|latest news|who won|precio de|"
-    r"tipo de cambio|el tiempo en)\b",
-    re.IGNORECASE,
-)
+LIVE_DATA = rule("live_data")
 
 
 # Requests for an explanation: search snippets (two lines each) are too thin to explain
 # "a MP das Bets", so the top result is read as well.
-EXPLAIN = re.compile(
-    r"\b(expli(que|ca|car|ca[çc][ãa]o)|entend(a|er|imento)|detalh\w*|resum\w*|"
-    r"como funciona|o que (muda|diz|prev[êe]|significa)|fale sobre|me fale|me conte sobre|"
-    r"explain|tell me about|how does|what does .* mean|expl[íi]came|cu[ée]ntame)\b",
-    re.IGNORECASE,
-)
+EXPLAIN = rule("explain")
 
 
 def wants_depth(message: str) -> bool:
@@ -257,13 +271,7 @@ def top_results(search_output: str, limit: int = 3) -> list[str]:
 
 # Current affairs: laws, courts, government, elections. Without a search, "Me explique a
 # MP das Bets?" got a fluent, confident and entirely made-up "MP 1.202/2024".
-CURRENT_AFFAIRS = re.compile(
-    r"\b(MPs?|medidas? provis[óo]rias?|projetos? de lei|PLs? ?\d|PECs?|decretos?|"
-    r"nova lei|lei (n[ºo°.]?\s?)?\d|san[çc][ãa]o|sancionad[ao]|vetad[ao]|STF|STJ|TSE|"
-    r"supremo|congresso|senado|c[âa]mara dos deputados|elei[çc](ão|ões|ao|oes)|"
-    r"governo (federal|lula|do estado)|minist[ée]rio|reforma (tribut[áa]ria|da previd[êe]ncia|"
-    r"administrativa)|bill|executive order|supreme court|ley (n[º°.]?\s?)?\d)\b"
-)
+CURRENT_AFFAIRS = rule("current_affairs", flags=0)  # case matters: "MP", "STF", "bill"
 
 
 def needs_live_data(message: str) -> bool:
@@ -273,7 +281,7 @@ def needs_live_data(message: str) -> bool:
     return bool(LIVE_DATA.search(message) or CURRENT_AFFAIRS.search(message))
 
 
-SOURCES_LABEL = {"Brazilian Portuguese": "Fontes", "Spanish": "Fuentes"}
+SOURCES_LABEL = {pack.name: pack.sources_label for pack in packs().values()}
 
 
 def sources_note(answer: str, records: list, language: str) -> str | None:

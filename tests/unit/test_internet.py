@@ -87,12 +87,46 @@ async def test_fetch_reads_text_and_skips_the_noise() -> None:
 
 async def test_redirects_are_checked_at_every_hop() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "evil.example":
+        if request.headers["host"] == "evil.example":  # connected by address, named in Host
             return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/"})
         return httpx.Response(200, text="should never be reached")
 
     with pytest.raises(WebError, match="private or local"):
         await client_for(handler).fetch("https://evil.example/go")
+
+
+async def test_the_connection_goes_to_the_checked_address(monkeypatch) -> None:
+    # DNS rebinding: public for the check, private for a second lookup at connect time.
+    answers = iter(["93.184.216.40", "127.0.0.1"])
+
+    def rebinding(host, port, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers), port))]
+
+    monkeypatch.setattr(web_module.socket, "getaddrinfo", rebinding)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(
+            (request.url.host, request.headers["host"], request.extensions.get("sni_hostname"))
+        )
+        return httpx.Response(200, text="ok", headers={"content-type": "text/plain"})
+
+    url, _, text = await client_for(handler).fetch("https://rebind.example/page")
+
+    assert seen == [("93.184.216.40", "rebind.example", "rebind.example")]
+    assert (url, text) == ("https://rebind.example/page", "ok")  # the page, not the address
+
+
+def test_pinning_keeps_ports_and_ipv6() -> None:
+    assert web_module.pinned("http://example.com:8080/a?b=1", "93.184.216.34") == (
+        "http://93.184.216.34:8080/a?b=1",
+        {"Host": "example.com:8080"},
+        {},
+    )
+    target, headers, extensions = web_module.pinned("https://example.com/", "2606:2800::1")
+    assert target == "https://[2606:2800::1]/"
+    assert headers == {"Host": "example.com"} and extensions == {"sni_hostname": "example.com"}
+    assert web_module.pinned("http://intranet/", None) == ("http://intranet/", {}, {})
 
 
 async def test_binary_content_is_refused() -> None:

@@ -551,6 +551,7 @@ python scripts/eval_agent.py --model llama3.1 --routing false -v
 ```bash
 pytest                  # todos os testes (integração é pulada se o Ollama estiver offline)
 pytest -m "not integration"
+pytest -m e2e           # a interface num navegador real (pip install -e ".[e2e]" e playwright install chromium)
 ruff check . && ruff format --check .
 ```
 
@@ -561,7 +562,7 @@ Outro projeto pode usar o Origin como dependência (`origin-ai`) e acrescentar t
 ## White label, idiomas e contas
 
 - **Marca:** um arquivo `brand/brand.json` troca o nome do produto e do assistente, o logo, o favicon, as cores (claro e escuro), a persona, a tela inicial e os links. Sem o arquivo, é o Origin. Com um arquivo inválido, o log avisa e a marca padrão continua. A persona nunca vai para o navegador. Veja o [guia de white label](docs/white-label.md).
-- **Idiomas:** a interface e as mensagens do servidor vêm em pt-BR e en, e há um seletor em Configurações. Um idioma novo é um arquivo novo em `origin/i18n/`, e um teste confere que ele tem todas as chaves.
+- **Idiomas:** a interface e as mensagens do servidor vêm em pt-BR e en, e há um seletor em Configurações. Um idioma novo é um catálogo em `origin/i18n/` (a interface) e um pacote em `origin/i18n/agent/` (o que o agente sabe do idioma: instruções de resposta, gatilhos de pesquisa, frases de memória). Os testes conferem os dois. Veja o [guia](docs/white-label.md#2-idiomas).
 - **Contas (opcional):** com `ORIGIN_AUTH=password`, há login, cada usuário tem as próprias conversas e memória, e os usuários são geridos com `python -m origin.auth`. O primeiro usuário herda os dados que já existiam. Veja [docs/deployment.md](docs/deployment.md) e [SECURITY.md](SECURITY.md).
 
 ## Arquitetura

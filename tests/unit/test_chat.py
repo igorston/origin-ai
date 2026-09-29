@@ -61,3 +61,40 @@ async def test_recall_failure_falls_back_to_plain_prompt(fake_engine: LLMEngine)
     fake_engine.memory = BrokenMemory()  # type: ignore[assignment]
     messages = await fake_engine._build_messages("oi")
     assert messages[0].content == "test"
+
+
+class MeasuredEngine:
+    """An engine whose answer came with Ollama's token counts, after tools or not."""
+
+    model_name = "fake"
+
+    def __init__(self, tool_calls: list) -> None:
+        self.tool_calls = tool_calls
+
+    async def generate(self, message, history=(), *args, **kwargs):
+        from origin.core.agent import ToolCallRecord
+        from origin.core.llm import ChatResult, TurnUsage
+
+        calls = [ToolCallRecord(name=n, args={}, output="página " * 800) for n in self.tool_calls]
+        return ChatResult(
+            text="Resposta.", tool_calls=calls, usage=TurnUsage(input_tokens=4000, output_tokens=20)
+        )
+
+
+async def test_a_turn_with_tools_is_estimated_not_measured(client: TestClient, sessions) -> None:
+    from main import app
+    from origin.api.routes.chat import get_engine
+
+    # The measurement of a web turn counts the fetched page, which the next turn drops.
+    app.dependency_overrides[get_engine] = lambda: MeasuredEngine(["fetch_url"])
+    session_id = client.post("/sessions").json()["id"]
+    after = client.post("/chat", json={"message": "Explique", "session_id": session_id}).json()
+
+    assert not after["context"]["measured"] and after["context"]["used"] < 4000
+    assert (await sessions.get(session_id)).context_tokens == 0  # nothing to calibrate on
+
+    # Without tools the measurement is the conversation itself: kept.
+    app.dependency_overrides[get_engine] = lambda: MeasuredEngine([])
+    after = client.post("/chat", json={"message": "E agora?", "session_id": session_id}).json()
+    assert after["context"]["measured"] and after["context"]["used"] == 4020
+    assert (await sessions.get(session_id)).context_tokens == 4020

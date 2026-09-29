@@ -6,22 +6,15 @@ from langchain_core.messages import ToolCall, ToolMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
+from origin.i18n.packs import rule
+
 logger = logging.getLogger(__name__)
 
 # Phrases in a final reply that claim a side effect only a given tool can produce. Small
 # models sometimes say "anotei!" without calling the tool; such replies get verified.
 CLAIMS: dict[str, re.Pattern[str]] = {
-    "remember": re.compile(
-        r"\b(salve[i]?|salv[oa]s?|anotei|anotad[oa]s?|guardei|guardad[oa]s?|registrei|"
-        r"registrad[oa]s?|memorizei|lembrete|vou lembrar|lembrarei|saved|noted|"
-        r"i'?ll remember|i will remember|remembered)\b",
-        re.IGNORECASE,
-    ),
-    "forget": re.compile(
-        r"\b(apaguei|apagad[oa]s?|esqueci|removi|removid[oa]s?|exclu[íi]|exclu[íi]d[oa]s?|"
-        r"deleted|removed|forgot(ten)?)\b",
-        re.IGNORECASE,
-    ),
+    "remember": rule("claims_remember"),
+    "forget": rule("claims_forget"),
 }
 
 
