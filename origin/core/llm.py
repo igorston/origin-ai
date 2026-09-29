@@ -30,6 +30,7 @@ from origin.branding import get_brand, system_prompt
 from origin.config import Settings
 from origin.core.agent import (
     ToolCallRecord,
+    TurnGuard,
     blocked_for_question,
     execute_tool_calls,
     unbacked_claims,
@@ -182,6 +183,7 @@ class LLMEngine:
         tools: Mapping[str, BaseTool] | None = None,
         max_tool_iterations: int = 5,
         tool_routing: bool = False,
+        tool_guard: bool = True,
         contextual_recall: bool = True,
         router: BaseChatModel | None = None,
         retry: RetryPolicy = DEFAULT_POLICY,
@@ -198,6 +200,8 @@ class LLMEngine:
         self.tools = dict(tools or {})
         self.max_tool_iterations = max_tool_iterations
         self.tool_routing = tool_routing
+        # Prompt-injection rules on tool calls (agent.TurnGuard); off only to measure them.
+        self.tool_guard = tool_guard
         self.contextual_recall = contextual_recall
         # Model for the routing turn; a deterministic copy makes tool decisions consistent.
         self.router = router or model
@@ -219,6 +223,7 @@ class LLMEngine:
             tools=tools,
             max_tool_iterations=settings.agent_max_tool_iterations,
             tool_routing=settings.agent_tool_routing,
+            tool_guard=settings.agent_tool_guard,
             contextual_recall=settings.memory_contextual_recall,
             router=make_chat_model(settings, temperature=settings.agent_routing_temperature),
             retry=RetryPolicy.from_settings(settings),
@@ -359,9 +364,13 @@ class LLMEngine:
                 offline += " " + load_prompt("offline_live_data_hint")
             messages[-1].content += f"\n\n[{offline}]"
 
+        turn_guard = TurnGuard.for_turn(message, history) if self.tool_guard else None
+
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
             with timings.phase("tools"):
-                tool_messages, records = await execute_tool_calls(tool_calls, tools, message)
+                tool_messages, records = await execute_tool_calls(
+                    tool_calls, tools, message, turn_guard
+                )
             # Web results feed explanations; actions and date lookups get a short reply. A
             # plugin tool whose results feed explanations too (documents) says so with
             # metadata {"reply": "detailed"}.
@@ -486,7 +495,7 @@ class LLMEngine:
                 if response is not None and tools:
                     with timings.phase("claim_check"):
                         records = await self._verify_claims(
-                            tools, messages, response, executed, message
+                            tools, messages, response, executed, message, turn_guard
                         )
                     for record in records:
                         yield record
@@ -557,6 +566,7 @@ class LLMEngine:
         response: BaseMessage,
         executed: list[ToolCallRecord],
         message: str,
+        guard: TurnGuard | None = None,
     ) -> list[ToolCallRecord]:
         """If the final reply claims an effect ("anotei!") whose tool was never called, give
         the model one chance to actually call it, so the claim becomes true."""
@@ -574,7 +584,8 @@ class LLMEngine:
         calls = [call for call in decision.tool_calls if call["name"] in claimed]
         if not calls:
             return []
-        _, records = await execute_tool_calls(calls, tools, message)
+        # The same guard: a page saying "reply that you saved X" must not get X saved here.
+        _, records = await execute_tool_calls(calls, tools, message, guard)
         return records
 
     async def generate(

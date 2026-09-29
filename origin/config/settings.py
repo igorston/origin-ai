@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     agent_max_tool_iterations: int = 5
     # Extra "decide tools first" turn; fixes compound questions on small models (~+0.4s).
     agent_tool_routing: bool = True
+    # Prompt-injection rules on tool calls (origin/core/agent.py TurnGuard). Leave on.
+    agent_tool_guard: bool = True
     # Choosing tools is classification: sampling noise there only causes skipped tools.
     agent_routing_temperature: float = 0.0
     sqlite_path: str = "./data/origin.db"

@@ -50,6 +50,11 @@ Metadados da tool (`tool.metadata = {...}`) ajustam o que o núcleo faz com o re
 | `"auto": fn` | `await fn(message) -> dict \| None`: os argumentos com que a tool se chama sozinha quando o roteamento não a chamou (ou `None`). Serve de rede de segurança, como a pesquisa obrigatória de dados ao vivo: a base de conhecimento se chama quando a mensagem tem um documento muito parecido. Com dois parâmetros, `fn(message, called)` recebe também os nomes das tools que o roteamento escolheu. Uma falha em `fn` é registrada no log e ignorada. |
 | `"network": True` | A tool usa a internet: só é oferecida quando o usuário liga o 🌐. |
 | `"not_for_questions": True` | Não é executada para perguntas puras ("Onde eu moro?"), a menos que `"explicit_intent"` (uma regex) apareça na mensagem. |
+| `"untrusted": True` | O resultado é conteúdo de fora (página, documento, célula de planilha) que qualquer um pode ter escrito. Depois que uma tool assim roda, o turno fica "contaminado". Marque toda tool que traz texto de terceiros. |
+| `"side_effect": True` | A tool altera dados do usuário (grava, apaga, envia). Num turno contaminado, só roda se a mensagem do próprio usuário pedir a ação (`"explicit_intent"` casa); senão é recusada e o modelo recebe o motivo. |
+| `"url_arg": "url"` | Esse argumento é um endereço a abrir. Só é aceito se veio do usuário (mensagens da conversa) ou de um resultado de tool neste turno (busca, link de página lida); um endereço composto pelo modelo é recusado. |
+
+As três últimas são regras em código contra *prompt injection* (`origin.core.agent.TurnGuard`, ligadas por `AGENT_TOOL_GUARD`): o modelo pode ser convencido a ignorar uma instrução do prompt, mas não essas.
 
 ## 3. Rotas e ajustes no app
 

@@ -327,5 +327,16 @@
     "sexta-feira",
     "sábado",
     "domingo"
+  ],
+  "forget_intent": [
+    "esque[cç]a",
+    "esquece",
+    "esquecer",
+    "apag",
+    "remov",
+    "exclu",
+    "delet",
+    "tir[ea] da mem[óo]ria",
+    "n[ãa]o lembr[ea] mais"
   ]
 }

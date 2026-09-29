@@ -166,5 +166,11 @@
     "Friday",
     "Saturday",
     "Sunday"
+  ],
+  "forget_intent": [
+    "forget",
+    "delete",
+    "remove",
+    "erase"
   ]
 }

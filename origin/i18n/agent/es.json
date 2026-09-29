@@ -112,5 +112,10 @@
     "viernes",
     "sábado",
     "domingo"
+  ],
+  "forget_intent": [
+    "olvida",
+    "borra",
+    "elimina"
   ]
 }

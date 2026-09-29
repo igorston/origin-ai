@@ -70,6 +70,8 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         cut = f"\n[... truncated: {len(text) - limit} more characters]" if len(text) > limit else ""
         return f"{UNTRUSTED}\nURL: {final}\nTitle: {title or '-'}\n\n{text[:limit]}{cut}"
 
-    web_search.metadata = NETWORK
-    fetch_url.metadata = NETWORK
+    # Outside content: after it, changes to the user's data need the user's own request, and
+    # only addresses from the user or from these results can be opened (agent.TurnGuard).
+    web_search.metadata = {**NETWORK, "untrusted": True}
+    fetch_url.metadata = {**NETWORK, "untrusted": True, "url_arg": "url"}
     return [web_search, fetch_url]

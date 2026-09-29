@@ -14,6 +14,9 @@ MEMORY_ID = re.compile(r"^[0-9a-f]{32}$")
 # A description must match a stored memory at least this well to be forgotten.
 FORGET_MIN_SCORE = 0.6
 EXPLICIT_SAVE_INTENT = rf"\b({alternatives('save_intent')})"
+# Asking to delete ("esquece aquilo", "apague", "forget"): after outside content was read,
+# forget runs only with it (agent.TurnGuard).
+EXPLICIT_FORGET_INTENT = rf"\b({alternatives('forget_intent')})"
 
 
 def get_tools(ctx: "ToolContext") -> list[BaseTool]:
@@ -72,7 +75,11 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
     # Pure questions ("Onde eu moro?", "O que levo de presente pra ela?") never save, unless
     # they carry an explicit save request ("Você pode anotar que...?", "Lembra que ...?").
     # "Você lembra o nome dela?" asks to recall, so bare "lembra" does not count.
-    remember.metadata = {"not_for_questions": True, "explicit_intent": EXPLICIT_SAVE_INTENT}
+    remember.metadata = {
+        "not_for_questions": True,
+        "explicit_intent": EXPLICIT_SAVE_INTENT,
+        "side_effect": True,  # after outside content, only on the user's explicit request
+    }
 
     @tool
     async def forget(memory: str) -> str:
@@ -98,4 +105,5 @@ def get_tools(ctx: "ToolContext") -> list[BaseTool]:
         await store.delete([target_id])
         return f'Deleted memory (id={target_id}): "{content}".'
 
+    forget.metadata = {"explicit_intent": EXPLICIT_FORGET_INTENT, "side_effect": True}
     return [remember, forget]

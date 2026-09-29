@@ -2,6 +2,14 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [0.5.0] - 2026-09-29
+
+### Segurança
+- Regras em código contra *prompt injection* (`TurnGuard`, `AGENT_TOOL_GUARD=true`): `fetch_url` só abre endereços vindos do usuário ou de resultados do turno; depois de ler conteúdo de fora, `remember` e `forget` só rodam com pedido explícito do usuário; a verificação de afirmações ("anotei") passa pelas mesmas regras. A tool recusada recebe o motivo, e o modelo responde sem ela.
+
+### Extensões
+- Novos metadados de tool: `untrusted`, `side_effect` e `url_arg` ([docs/extending.md](docs/extending.md)). `web_search` e `fetch_url` são `untrusted`; `remember` e `forget` são `side_effect`.
+
 ## [0.4.2] - 2026-09-29
 
 ### Extensões
@@ -101,6 +109,7 @@ Primeira versão pública.
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
 
+[0.5.0]: https://github.com/igorston/origin-ai/releases/tag/v0.5.0
 [0.4.2]: https://github.com/igorston/origin-ai/releases/tag/v0.4.2
 [0.4.1]: https://github.com/igorston/origin-ai/releases/tag/v0.4.1
 [0.4.0]: https://github.com/igorston/origin-ai/releases/tag/v0.4.0
