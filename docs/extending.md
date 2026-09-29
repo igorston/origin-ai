@@ -47,6 +47,7 @@ Metadados da tool (`tool.metadata = {...}`) ajustam o que o núcleo faz com o re
 | --- | --- |
 | `"reply": "detailed"` | A resposta segue o tamanho do pedido, como após a web. Sem isso, após uma tool o modelo é instruído a responder em uma ou duas frases, o que serve para confirmar uma ação, não para explicar um documento. |
 | `"sources": fn` | `fn(output) -> ["Manual.pdf, p. 3", ...]`, as fontes do resultado, da melhor para a pior. Se a resposta não citar nenhuma, as três primeiras entram na lista de "Fontes" sob ela. |
+| `"auto": fn` | `await fn(message) -> dict \| None`: os argumentos com que a tool se chama sozinha quando o roteamento não a chamou (ou `None`). Serve de rede de segurança, como a pesquisa obrigatória de dados ao vivo: a base de conhecimento se chama quando a mensagem tem um documento muito parecido. Uma falha em `fn` é registrada no log e ignorada. |
 | `"network": True` | A tool usa a internet: só é oferecida quando o usuário liga o 🌐. |
 | `"not_for_questions": True` | Não é executada para perguntas puras ("Onde eu moro?"), a menos que `"explicit_intent"` (uma regex) apareça na mensagem. |
 

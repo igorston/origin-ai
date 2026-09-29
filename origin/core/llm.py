@@ -401,6 +401,7 @@ class LLMEngine:
                     calls.append(
                         {"name": "web_search", "args": {"query": message}, "id": "live-data"}
                     )
+                calls += await self._auto_calls(tools, calls, message)
                 if calls:
                     messages.append(AIMessage("", tool_calls=calls))
                     records = await run_tools(calls)
@@ -520,6 +521,29 @@ class LLMEngine:
         target = self.language_of(f"{message} {context}")
         english = await translate(fragment, "English")
         return english if target == "English" else await translate(english, target)
+
+    async def _auto_calls(
+        self, tools: Mapping[str, BaseTool], calls: Sequence[ToolCall], message: str
+    ) -> list[ToolCall]:
+        """Calls that tools add for themselves when the routing turn left them out: a tool
+        with metadata {"auto": fn}, where `await fn(message)` returns its arguments (or
+        None). Like the live-data search: the knowledge base checks whether the message
+        matches a document strongly, because asked "Quantos dias por semana posso
+        trabalhar de casa?" the router skipped it and the model made a policy up."""
+        called = {call["name"] for call in calls}
+        added: list[ToolCall] = []
+        for name in tools:
+            auto = tool_metadata(tools, name).get("auto")
+            if name in called or not callable(auto):
+                continue
+            try:
+                args = await auto(message)
+            except Exception:  # a failing check must not break the turn
+                logger.warning("Auto-call check of %s failed", name, exc_info=True)
+                continue
+            if args is not None:
+                added.append({"name": name, "args": args, "id": f"auto-{name}"})
+        return added
 
     async def _verify_claims(
         self,

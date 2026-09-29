@@ -2,6 +2,11 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [0.4.1] - 2026-09-29
+
+### Extensões
+- Tools de plugins podem se chamar sozinhas quando o roteamento as deixa de fora (`metadata["auto"]`), como a pesquisa obrigatória de dados ao vivo. Perguntada sobre uma regra da empresa, a IA às vezes não consultava os documentos e inventava a política.
+
 ## [0.4.0] - 2026-09-29
 
 ### Corrigido
@@ -91,6 +96,7 @@ Primeira versão pública.
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
 
+[0.4.1]: https://github.com/igorston/origin-ai/releases/tag/v0.4.1
 [0.4.0]: https://github.com/igorston/origin-ai/releases/tag/v0.4.0
 [0.3.0]: https://github.com/igorston/origin-ai/releases/tag/v0.3.0
 [0.2.0]: https://github.com/igorston/origin-ai/releases/tag/v0.2.0

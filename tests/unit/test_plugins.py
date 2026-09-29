@@ -176,3 +176,45 @@ def test_tools_know_their_workspace(installed, module) -> None:
     installed[plugins.TOOLS_GROUP] = {"acme": "acme_tools"}
     ToolRegistry.discover(ToolContext(Settings(), workspace="u7"))
     assert seen == ["u7"]
+
+
+async def test_a_plugin_tool_can_call_itself_when_the_router_skips_it() -> None:
+    from langchain_core.messages import AIMessage
+
+    from origin.core import LLMEngine
+    from tests.fakes import ScriptedChatModel
+
+    searched: list[str] = []
+
+    @tool
+    async def search_documents(query: str) -> str:
+        """Search the company documents."""
+        searched.append(query)
+        return "1. Source: Manual.pdf, p. 3 (collection: Empresa)\nAté 3 dias por semana."
+
+    async def auto(message: str) -> dict | None:
+        return {"query": message} if "casa" in message else None
+
+    async def broken(message: str) -> dict | None:
+        raise ConnectionError("ollama down")
+
+    @tool
+    def other(x: str) -> str:
+        """Another tool whose check fails."""
+        return x
+
+    search_documents.metadata = {"auto": auto}
+    other.metadata = {"auto": broken}
+    router = ScriptedChatModel(responses=[AIMessage("")])  # the router calls nothing
+    model = ScriptedChatModel(responses=[AIMessage("Até 3 dias por semana.")])
+    engine = LLMEngine(
+        model, "sys", "scripted", tools={"search_documents": search_documents, "other": other},
+        tool_routing=True, router=router, locale="pt-BR",
+    )  # fmt: skip
+
+    result = await engine.generate("Posso trabalhar de casa quantos dias?", use_memory=False)
+    assert searched == ["Posso trabalhar de casa quantos dias?"]
+    assert [c.name for c in result.tool_calls] == ["search_documents"]  # the failing check: skipped
+
+    await engine.generate("Qual a capital da França?", use_memory=False)
+    assert len(searched) == 1  # no match, no call
