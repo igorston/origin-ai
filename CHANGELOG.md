@@ -2,6 +2,11 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [0.4.2] - 2026-09-29
+
+### Extensões
+- A verificação `metadata["auto"]` pode receber também as tools que o roteamento escolheu (`fn(message, called)`), para ficar de fora quando outra tool já responde. A base de conhecimento usa isso: com o total de uma planilha já calculado, a busca de documentos ainda trazia linhas soltas, e o modelo as somava errado à mão.
+
 ## [0.4.1] - 2026-09-29
 
 ### Extensões
@@ -96,6 +101,7 @@ Primeira versão pública.
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
 
+[0.4.2]: https://github.com/igorston/origin-ai/releases/tag/v0.4.2
 [0.4.1]: https://github.com/igorston/origin-ai/releases/tag/v0.4.1
 [0.4.0]: https://github.com/igorston/origin-ai/releases/tag/v0.4.0
 [0.3.0]: https://github.com/igorston/origin-ai/releases/tag/v0.3.0

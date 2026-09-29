@@ -218,3 +218,39 @@ async def test_a_plugin_tool_can_call_itself_when_the_router_skips_it() -> None:
 
     await engine.generate("Qual a capital da França?", use_memory=False)
     assert len(searched) == 1  # no match, no call
+
+
+async def test_an_auto_check_can_see_what_the_router_chose() -> None:
+    from langchain_core.messages import AIMessage
+
+    from origin.core import LLMEngine
+    from tests.fakes import ScriptedChatModel
+
+    seen: list[frozenset[str]] = []
+
+    @tool
+    async def search_documents(query: str) -> str:
+        """Search the company documents."""
+        return "nothing"
+
+    @tool
+    async def query_spreadsheet(file: str) -> str:
+        """Compute over a spreadsheet."""
+        return "total: 125"
+
+    async def auto(message: str, called: frozenset[str]) -> dict | None:
+        seen.append(called)
+        return None if "query_spreadsheet" in called else {"query": message}
+
+    search_documents.metadata = {"auto": auto}
+    call = {"name": "query_spreadsheet", "args": {"file": "vendas"}, "id": "1"}
+    router = ScriptedChatModel(responses=[AIMessage("", tool_calls=[call])])
+    model = ScriptedChatModel(responses=[AIMessage("125.")])
+    engine = LLMEngine(
+        model, "sys", "scripted",
+        tools={"search_documents": search_documents, "query_spreadsheet": query_spreadsheet},
+        tool_routing=True, router=router, locale="pt-BR",
+    )  # fmt: skip
+    result = await engine.generate("Qual o total de vendas?", use_memory=False)
+    assert seen == [frozenset({"query_spreadsheet"})]
+    assert [c.name for c in result.tool_calls] == ["query_spreadsheet"]

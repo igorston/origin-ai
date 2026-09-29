@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import inspect
 import json
 import logging
 import math
@@ -527,9 +528,12 @@ class LLMEngine:
     ) -> list[ToolCall]:
         """Calls that tools add for themselves when the routing turn left them out: a tool
         with metadata {"auto": fn}, where `await fn(message)` returns its arguments (or
-        None). Like the live-data search: the knowledge base checks whether the message
-        matches a document strongly, because asked "Quantos dias por semana posso
-        trabalhar de casa?" the router skipped it and the model made a policy up."""
+        None); `fn(message, called)` also gets the names of the tools the router chose.
+        Like the live-data search: the knowledge base checks whether the message matches a
+        document strongly, because asked "Quantos dias por semana posso trabalhar de
+        casa?" the router skipped it and the model made a policy up. `called` lets it stay
+        out when a sibling tool already answers (a spreadsheet total: its rows, searched
+        too, had the model add them up by hand, wrongly)."""
         called = {call["name"] for call in calls}
         added: list[ToolCall] = []
         for name in tools:
@@ -537,7 +541,8 @@ class LLMEngine:
             if name in called or not callable(auto):
                 continue
             try:
-                args = await auto(message)
+                wants_called = len(inspect.signature(auto).parameters) > 1
+                args = await (auto(message, frozenset(called)) if wants_called else auto(message))
             except Exception:  # a failing check must not break the turn
                 logger.warning("Auto-call check of %s failed", name, exc_info=True)
                 continue
