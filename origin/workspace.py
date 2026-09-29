@@ -102,7 +102,7 @@ class Workspaces:
         )
         registry = (
             ToolRegistry.discover(
-                ToolContext(s, memory, llm=self.judge, curator=curator),
+                ToolContext(s, memory, llm=self.judge, curator=curator, workspace=space),
                 disabled=s.tools_disabled,
             )
             if s.tools_enabled

@@ -63,6 +63,7 @@ O catálogo traduz as telas. O que o agente sabe de cada idioma fica num **pacot
 | `reply`, `reply_detailed` | A instrução de resposta, escrita no próprio idioma: curta após ações, e com a extensão do pedido após a web |
 | `stopwords`, `markers` | Palavras frequentes e letras exclusivas (ã, ñ), para reconhecer o idioma da mensagem |
 | `sources_label` | O título da lista de fontes ("Fontes") |
+| `weekdays` | Os dias da semana, a partir de segunda, como as tools de data os escrevem (o modelo traduz mal os nomes em inglês) |
 | `live_data`, `current_affairs` | Frases que sempre geram uma pesquisa (cotação, clima, leis, tribunais) |
 | `explain` | Pedidos de explicação, que leem a página do melhor resultado |
 | `additive` | "Também": um fato que soma, sem substituir o anterior |

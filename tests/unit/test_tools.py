@@ -194,3 +194,24 @@ async def test_an_addition_never_replaces() -> None:
         "Gosto de pizza de calabresa.", "Agora também gosto de pizza de mussarela."
     )
     assert not judge.received  # decided without asking the model
+
+
+def test_weekdays_follow_the_brand_language(tmp_path) -> None:
+    import json
+
+    from origin.integrations.tools.clock import weekday_names
+
+    brand = tmp_path / "brand.json"
+    brand.write_text(json.dumps({"locale": "pt-BR"}), encoding="utf-8")
+    # A pt-BR brand with ORIGIN_LOCALE left at its default (en-US) got English names, which
+    # the model mistranslated ("Wednesday" -> "terça-feira").
+    settings = Settings(origin_locale="en-US", origin_brand_path=str(brand))
+    assert weekday_names(settings)[2] == "quarta-feira"
+    assert (
+        weekday_names(Settings(origin_locale="en-US", origin_brand_path=str(tmp_path / "x")))[2]
+        == "Wednesday"
+    )
+    assert (
+        weekday_names(Settings(origin_locale="fr-FR", origin_brand_path=str(tmp_path / "x")))[2]
+        == "Wednesday"
+    )

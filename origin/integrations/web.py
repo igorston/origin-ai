@@ -21,6 +21,7 @@ import ipaddress
 import logging
 import re
 import socket
+from collections.abc import Sequence
 from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
@@ -284,15 +285,27 @@ def needs_live_data(message: str) -> bool:
 SOURCES_LABEL = {pack.name: pack.sources_label for pack in packs().values()}
 
 
-def sources_note(answer: str, records: list, language: str) -> str | None:
-    """A "Sources" list for an answer built from the web that names no URL.
+def sources_note(
+    answer: str, records: list, language: str, extra: Sequence[str] = ()
+) -> str | None:
+    """A "Sources" list for an answer built from the web that names no URL, plus the
+    `extra` sources other tools named (documents: "Manual.pdf, p. 3")."""
+    sources = [*web_sources(answer, records), *extra]
+    if not sources:
+        return None
+    label = SOURCES_LABEL.get(language, "Sources")
+    return f"\n\n**{label}:**\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(sources, 1))
+
+
+def web_sources(answer: str, records: list) -> list[str]:
+    """The URLs behind an answer built from the web, when the answer names none.
 
     Asked to cite, the 8B model wrote "[1]" and "[2]" but not the addresses, so the
     references are resolved here from the tool results (fetched pages, then the search
     results the answer points to, or the top three)."""
     used = [r for r in records if r.name in ("web_search", "fetch_url")]
     if not used or re.search(r"https?://", answer):
-        return None
+        return []
     urls: list[str] = []
     for record in used:
         if record.name == "fetch_url" and not record.output.startswith(READ_FAILED):
@@ -301,11 +314,7 @@ def sources_note(answer: str, records: list, language: str) -> str | None:
                for n, url in RESULT_LINE.findall(record.output)}  # fmt: skip
     cited = [int(n) for n in re.findall(r"\[(\d+)\]", answer)]
     urls += [results[n] for n in dict.fromkeys(cited) if n in results] or list(results.values())[:3]
-    urls = list(dict.fromkeys(urls))
-    if not urls:
-        return None
-    label = SOURCES_LABEL.get(language, "Sources")
-    return f"\n\n**{label}:**\n" + "\n".join(f"{i}. {url}" for i, url in enumerate(urls, 1))
+    return list(dict.fromkeys(urls))
 
 
 class _DuckDuckGoParser(HTMLParser):

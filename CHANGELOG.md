@@ -2,6 +2,17 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] - 2026-09-29
+
+### Corrigido
+- Os dias da semana das tools de data seguem o idioma do app (o da marca, senão `ORIGIN_LOCALE`), vindos dos pacotes de idioma. Uma marca em pt-BR sem `ORIGIN_LOCALE` no `.env` recebia os nomes em inglês, e o modelo os traduzia errado ("Wednesday" virava "terça-feira"): 9 de 18 casos de datas.
+
+### Extensões
+- Tools de plugins podem pedir resposta completa (`metadata["reply"] = "detailed"`) e declarar as próprias fontes (`metadata["sources"]`), que entram na lista de "Fontes" quando a resposta não cita nenhuma.
+- `ToolContext.workspace`: as tools sabem de qual usuário são, para dados e permissões por usuário.
+- `render_index(..., template=...)` monta páginas de plugins com a marca, o idioma e os dados de inicialização do núcleo.
+- Os links da marca aceitam caminhos do próprio site (`"/knowledge"`), abertos na mesma aba. `//outro-site` e esquemas como `javascript:` continuam recusados.
+
 ## [0.3.0] - 2026-09-29
 
 ### Corrigido
@@ -80,6 +91,7 @@ Primeira versão pública.
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
 
+[0.4.0]: https://github.com/igorston/origin-ai/releases/tag/v0.4.0
 [0.3.0]: https://github.com/igorston/origin-ai/releases/tag/v0.3.0
 [0.2.0]: https://github.com/igorston/origin-ai/releases/tag/v0.2.0
 [0.1.0]: https://github.com/igorston/origin-ai/releases/tag/v0.1.0

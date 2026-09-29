@@ -4,23 +4,24 @@ from typing import TYPE_CHECKING
 
 from langchain_core.tools import BaseTool, tool
 
+from origin.branding import app_locale
+from origin.i18n.packs import packs
+
 if TYPE_CHECKING:
+    from origin.config import Settings
     from origin.integrations.registry import ToolContext
 
-# Small models mistranslate English weekday names, so return them already localized.
-WEEKDAYS = {
-    "en": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-    "pt": [
-        "segunda-feira",
-        "terça-feira",
-        "quarta-feira",
-        "quinta-feira",
-        "sexta-feira",
-        "sábado",
-        "domingo",
-    ],
-    "es": ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"],
-}
+ENGLISH = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def weekday_names(settings: "Settings") -> tuple[str, ...]:
+    """The weekdays in the app's language (the brand's, else ORIGIN_LOCALE), from its
+    language pack. Small models mistranslate English names ("Wednesday" came back as
+    "terça-feira"), so the tools write them already in the user's language. Following
+    ORIGIN_LOCALE alone, a pt-BR brand without it in .env got English names: 9/18 dates."""
+    language = app_locale(settings).split("-")[0].lower()
+    pack = packs().get(language)
+    return pack.weekdays if pack and len(pack.weekdays) == 7 else ENGLISH
 
 
 def _now() -> datetime:
@@ -45,7 +46,7 @@ def _parse_target(target_date: str, today: date) -> date:
 
 
 def get_tools(ctx: "ToolContext") -> list[BaseTool]:
-    weekdays = WEEKDAYS.get(ctx.settings.origin_locale.split("-")[0].lower(), WEEKDAYS["en"])
+    weekdays = weekday_names(ctx.settings)
 
     @tool
     def get_current_datetime() -> str:

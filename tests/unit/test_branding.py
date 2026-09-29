@@ -58,12 +58,20 @@ def test_brand_names_and_persona_reach_the_system_prompt(brand_settings: Setting
         json.dumps({"theme": {"light": {"font": "Comic Sans"}}}),  # not a theme token
         json.dumps({"product_name": "  "}),
         json.dumps({"links": {"x": "javascript:alert(1)"}}),
+        json.dumps({"links": {"x": "//evil.example/"}}),  # another site, scheme-relative
     ],
 )
 def test_invalid_brand_files_fall_back_to_the_defaults(tmp_path: Path, bad: str) -> None:
     path = tmp_path / "brand.json"
     path.write_text(bad, encoding="utf-8")
     assert load_brand(Settings(origin_brand_path=str(path))) == Brand()
+
+
+def test_links_may_point_at_pages_of_this_site(tmp_path: Path) -> None:
+    path = tmp_path / "brand.json"
+    links = {"Base de conhecimento": "/knowledge", "Site": "https://example.com"}
+    path.write_text(json.dumps({"links": links}), encoding="utf-8")
+    assert load_brand(Settings(origin_brand_path=str(path))).links == links
 
 
 def test_the_page_is_rendered_with_the_brand(brand_settings: Settings) -> None:

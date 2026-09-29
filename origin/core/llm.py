@@ -112,6 +112,29 @@ def make_chat_model(settings: Settings, temperature: float | None = None) -> Cha
     )
 
 
+def tool_metadata(tools: Mapping[str, BaseTool], name: str) -> dict:
+    tool = tools.get(name)
+    return (tool.metadata if tool is not None else None) or {}
+
+
+def tool_sources(
+    answer: str, records: Sequence[ToolCallRecord], tools: Mapping[str, BaseTool]
+) -> list[str]:
+    """Sources that plugin tools name for their results (metadata {"sources": fn}, where
+    fn(output) -> ["Manual.pdf, p. 3", ...], best first), for an answer that cites none of
+    them: the top three of each call. An answer that cites one already chose its sources;
+    listing the other results it did not use would only add noise."""
+    labels: list[str] = []
+    for record in records:
+        sources = tool_metadata(tools, record.name).get("sources")
+        if not callable(sources):
+            continue
+        named = list(dict.fromkeys(sources(record.output)))
+        if not any(label in answer for label in named):
+            labels += named[:3]
+    return list(dict.fromkeys(labels))
+
+
 def remind_language(
     tool_messages: list[ToolMessage],
     message: str,
@@ -338,10 +361,12 @@ class LLMEngine:
         async def run_tools(tool_calls: list[ToolCall]) -> list[ToolCallRecord]:
             with timings.phase("tools"):
                 tool_messages, records = await execute_tool_calls(tool_calls, tools, message)
-            # Web results feed explanations; actions and date lookups get a short reply.
+            # Web results feed explanations; actions and date lookups get a short reply. A
+            # plugin tool whose results feed explanations too (documents) says so with
+            # metadata {"reply": "detailed"}.
             detailed = any(
-                getattr(tools.get(r.name), "metadata", None)
-                and tools[r.name].metadata.get("network")
+                (meta := tool_metadata(tools, r.name)).get("network")
+                or meta.get("reply") == "detailed"
                 for r in records
             )
             messages.extend(remind_language(tool_messages, message, self.locale, detailed))
@@ -448,7 +473,12 @@ class LLMEngine:
                         "Tool iteration limit reached; ignoring %d call(s)", len(tool_calls)
                     )
                 if response is not None and executed:
-                    note = sources_note(response.text, executed, self.language_of(message))
+                    note = sources_note(
+                        response.text,
+                        executed,
+                        self.language_of(message),
+                        extra=tool_sources(response.text, executed, tools),
+                    )
                     if note:
                         yield note
                 if response is not None and tools:

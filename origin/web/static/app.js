@@ -1052,7 +1052,10 @@ function applyBrand() {
   const links = Object.entries(brand.links || {});
   const nav = $("#brand-links");
   nav.hidden = !links.length;
-  setChildren(nav, links.map(([label, url]) => h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label)));
+  // Other sites open in a new tab; a page of this one (a plugin's) replaces the chat.
+  setChildren(nav, links.map(([label, url]) => url.startsWith("/")
+    ? h("a", { href: url }, label)
+    : h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, label)));
 
   const picker = $("#language");
   setChildren(picker, Object.entries(languages).map(([code, name]) =>

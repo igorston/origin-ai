@@ -31,6 +31,7 @@ class LanguagePack:
     stopwords: frozenset[str] = frozenset()  # frequent words, to detect the language
     markers: str = ""  # letters only this language uses among the packs (ã, ñ)
     filler_words: frozenset[str] = frozenset()  # may vanish when a note is rewritten
+    weekdays: tuple[str, ...] = ()  # Monday first, as the date tools write them
     patterns: dict[str, list[str]] = field(default_factory=dict)
 
 
@@ -38,7 +39,7 @@ def _load(path: Path) -> LanguagePack:
     data = json.loads(path.read_text(encoding="utf-8"))
     patterns = {
         key: value for key, value in data.items() if isinstance(value, list) and key not in
-        ("stopwords", "filler_words")
+        ("stopwords", "filler_words", "weekdays")
     }  # fmt: skip
     patterns.update({f"writer.{key}": value for key, value in data.get("writer", {}).items()})
     return LanguagePack(
@@ -51,6 +52,7 @@ def _load(path: Path) -> LanguagePack:
         stopwords=frozenset(data.get("stopwords", [])),
         markers=data.get("markers", ""),
         filler_words=frozenset(data.get("filler_words", [])),
+        weekdays=tuple(data.get("weekdays", [])),
         patterns=patterns,
     )
 

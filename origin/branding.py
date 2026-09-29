@@ -64,7 +64,9 @@ class Brand(BaseModel):
     persona: str = ""
     theme: Theme = Theme()
     welcome: Welcome = Welcome()
-    links: dict[str, str] = Field(default_factory=dict)  # label -> URL (sidebar footer)
+    # label -> URL (sidebar footer): http(s), or a path on this site ("/knowledge", a
+    # plugin's page), which opens in the same tab.
+    links: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("product_name", "assistant_name")
     @classmethod
@@ -76,9 +78,10 @@ class Brand(BaseModel):
     @field_validator("links")
     @classmethod
     def _http_links(cls, links: dict[str, str]) -> dict[str, str]:
-        bad = [url for url in links.values() if not re.match(r"^https?://", url)]
+        # "//host" is another site; "javascript:" and friends are refused like any scheme.
+        bad = [url for url in links.values() if not re.match(r"^(https?://|/(?!/))", url)]
         if bad:
-            raise ValueError(f"links must be http(s) URLs: {bad}")
+            raise ValueError(f"links must be http(s) URLs or paths on this site: {bad}")
         return links
 
     @staticmethod

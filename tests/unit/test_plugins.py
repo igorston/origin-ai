@@ -122,3 +122,57 @@ def test_a_failing_app_plugin_stops_the_app(installed, module) -> None:
 def test_without_plugins_nothing_changes(installed) -> None:
     app = FastAPI()
     assert plugins.load_app_plugins(app, Settings()) == []
+
+
+async def test_a_plugin_tool_can_ask_for_a_full_reply_and_name_its_sources() -> None:
+    from langchain_core.messages import AIMessage
+
+    from origin.core import LLMEngine
+    from tests.fakes import ScriptedChatModel
+
+    @tool
+    async def search_documents(query: str) -> str:
+        """Search the company documents."""
+        return "1. Manual.pdf, p. 3\nFérias: 30 dias por ano."
+
+    search_documents.metadata = {
+        "reply": "detailed",
+        "sources": lambda output: ["Manual.pdf, p. 3", "Política.docx"],
+    }
+    router = ScriptedChatModel(
+        responses=[
+            AIMessage(
+                "",
+                tool_calls=[{"name": "search_documents", "args": {"query": "férias"}, "id": "1"}],
+            )
+        ]
+    )
+    model = ScriptedChatModel(responses=[AIMessage("São 30 dias por ano (Manual.pdf, p. 3).")])
+    engine = LLMEngine(
+        model, "sys", "scripted", tools={"search_documents": search_documents},
+        tool_routing=True, router=router, locale="pt-BR",
+    )  # fmt: skip
+
+    result = await engine.generate("Quantos dias de férias eu tenho?", use_memory=False)
+
+    reminder = model.received[-1][-1].content
+    assert "uma ou duas frases" not in reminder  # the detailed instruction, not the short one
+    # The answer cites its source: the results it did not use are not listed.
+    assert result.text == "São 30 dias por ano (Manual.pdf, p. 3)."
+
+    model.responses = [AIMessage("São 30 dias por ano.")]  # this time, no citation
+    result = await engine.generate("E de licença?", use_memory=False)
+    assert result.text.endswith("**Fontes:**\n1. Manual.pdf, p. 3\n2. Política.docx")
+
+
+def test_tools_know_their_workspace(installed, module) -> None:
+    seen: list[str] = []
+
+    def get_tools(ctx):
+        seen.append(ctx.workspace)
+        return []
+
+    module("acme_tools", get_tools=get_tools)
+    installed[plugins.TOOLS_GROUP] = {"acme": "acme_tools"}
+    ToolRegistry.discover(ToolContext(Settings(), workspace="u7"))
+    assert seen == ["u7"]

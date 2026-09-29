@@ -318,5 +318,14 @@
     "scenes_label": [
       "CENAS"
     ]
-  }
+  },
+  "weekdays": [
+    "segunda-feira",
+    "terça-feira",
+    "quarta-feira",
+    "quinta-feira",
+    "sexta-feira",
+    "sábado",
+    "domingo"
+  ]
 }

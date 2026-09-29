@@ -37,9 +37,18 @@ def get_tools(ctx: ToolContext) -> list[BaseTool]:
     return [crm_lookup]
 ```
 
-- `ctx` traz as configurações, a memória do usuário (com contas, a de cada um) e o modelo usado para verificações.
+- `ctx` traz as configurações, a memória do usuário (com contas, a de cada um), o modelo usado para verificações e `ctx.workspace`: de quem são essas tools (`""` sem contas e para o primeiro usuário, `"u<id>"` para os outros). Use-o para dados por usuário e permissões.
 - As tools dos plugins entram depois das nativas. Uma tool com o nome de uma nativa é recusada, e não substitui a original.
 - `TOOLS_DISABLED` desliga qualquer uma delas pelo nome.
+
+Metadados da tool (`tool.metadata = {...}`) ajustam o que o núcleo faz com o resultado:
+
+| Chave | Efeito |
+| --- | --- |
+| `"reply": "detailed"` | A resposta segue o tamanho do pedido, como após a web. Sem isso, após uma tool o modelo é instruído a responder em uma ou duas frases, o que serve para confirmar uma ação, não para explicar um documento. |
+| `"sources": fn` | `fn(output) -> ["Manual.pdf, p. 3", ...]`, as fontes do resultado, da melhor para a pior. Se a resposta não citar nenhuma, as três primeiras entram na lista de "Fontes" sob ela. |
+| `"network": True` | A tool usa a internet: só é oferecida quando o usuário liga o 🌐. |
+| `"not_for_questions": True` | Não é executada para perguntas puras ("Onde eu moro?"), a menos que `"explicit_intent"` (uma regex) apareça na mensagem. |
 
 ## 3. Rotas e ajustes no app
 
@@ -69,6 +78,10 @@ def register(app: FastAPI, settings: Settings) -> None:
 ```
 
 Com as contas ligadas (`ORIGIN_AUTH=password`), as rotas do plugin exigem login como todas as outras. Só a tela de login, a marca e o `/health` são públicos.
+
+### Uma página própria
+
+`origin.web.render_index(settings, user, template=Path(...))` monta uma página HTML do plugin como as do núcleo: com a marca (título, favicon, cores), o idioma e os dados de inicialização. O modelo usa os marcadores `{{lang}}`, `{{title}}`, `{{favicon}}`, `{{theme}}` e `{{boot}}`, e pode importar `/static/styles.css` e `/static/i18n.js`. Para um link na barra lateral do chat, use os `links` da marca com um caminho do próprio site (`"/knowledge"`), que abre na mesma aba.
 
 ## 4. Executar
 

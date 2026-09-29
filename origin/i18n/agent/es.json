@@ -103,5 +103,14 @@
     "scenes_label": [
       "ESCENAS"
     ]
-  }
+  },
+  "weekdays": [
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo"
+  ]
 }

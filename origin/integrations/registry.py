@@ -35,6 +35,9 @@ class ToolContext:
     llm: BaseChatModel | None = None
     # Shared with the API, so calibrated thresholds apply to tools too.
     curator: MemoryCurator | None = None
+    # The workspace these tools serve: "" without accounts (and for the first user), else
+    # "u<user id>". Plugins use it for per-user data and permissions.
+    workspace: str = ""
 
 
 class ToolRegistry:

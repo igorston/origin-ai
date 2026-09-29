@@ -61,7 +61,16 @@ def _theme_css(brand: Brand) -> str:
     return "\n".join(css)
 
 
-def render_index(settings: Settings, user: dict | None = None, page: str = "index.html") -> str:
+def render_index(
+    settings: Settings,
+    user: dict | None = None,
+    page: str = "index.html",
+    template: Path | None = None,
+) -> str:
+    """A page of the interface with the brand, the language and the boot data filled in.
+    `template` renders a page from another package (a plugin's) the same way: it gets the
+    placeholders {{lang}}, {{title}}, {{favicon}}, {{theme}} and {{boot}}, and can import
+    /static/i18n.js and the other modules."""
     brand = get_brand(settings)
     locale = app_locale(settings)
     boot = {
@@ -82,7 +91,7 @@ def render_index(settings: Settings, user: dict | None = None, page: str = "inde
     }
     # Inside <script type="application/json">: "</" must not close the tag.
     boot_json = json.dumps(boot, ensure_ascii=False).replace("</", "<\\/")
-    html_page = (STATIC_DIR / page).read_text(encoding="utf-8")
+    html_page = (template or STATIC_DIR / page).read_text(encoding="utf-8")
     replacements = {
         "{{lang}}": html.escape(locale),
         "{{title}}": html.escape(brand.product_name),
