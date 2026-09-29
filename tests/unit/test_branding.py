@@ -105,3 +105,20 @@ def test_brand_routes(client: TestClient, brand_settings: Settings, monkeypatch)
     assert client.get("/brand/brand.json").status_code == 404
     assert client.get("/brand/..%2Fbrand.json").status_code == 404
     assert "<title>Aurora</title>" in client.get("/").text
+
+
+def test_a_product_reports_its_own_version(tmp_path: Path) -> None:
+    from importlib.metadata import version
+
+    from origin import __version__
+    from origin.branding import product_version, version_label
+
+    path = tmp_path / "brand.json"
+    path.write_text(json.dumps({"product_name": "Acme", "package": "pytest"}), encoding="utf-8")
+    settings = Settings(origin_brand_path=str(path))
+    assert product_version(settings) == version("pytest")
+    assert version_label(settings) == f"{version('pytest')} (Origin {__version__})"
+
+    missing = tmp_path / "missing.json"
+    missing.write_text(json.dumps({"package": "not-installed-anywhere"}), encoding="utf-8")
+    assert version_label(Settings(origin_brand_path=str(missing))) == __version__

@@ -28,6 +28,7 @@ def test_health_ok(client: TestClient, monkeypatch: pytest.MonkeyPatch, loaded: 
     assert response.json() == {
         "status": "ok",
         "version": __version__,
+        "core_version": __version__,
         "ready": loaded,
         "ollama": {
             "url": "http://ollama",
@@ -54,6 +55,12 @@ class FailingEngine(LLMEngine):
     def __init__(self, exc: Exception) -> None:
         self.exc = exc
         self.model_name = "failing"
+
+    async def offered_tools(self, use_web: bool = False) -> dict:
+        return {}
+
+    def base_tokens(self, tools) -> int:
+        return 50
 
     async def generate(self, *args: object, **kwargs: object):
         raise self.exc

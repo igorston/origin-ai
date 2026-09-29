@@ -71,6 +71,12 @@ class MeasuredEngine:
     def __init__(self, tool_calls: list) -> None:
         self.tool_calls = tool_calls
 
+    async def offered_tools(self, use_web: bool = False) -> dict:
+        return {}
+
+    def base_tokens(self, tools) -> int:
+        return 50
+
     async def generate(self, message, history=(), *args, **kwargs):
         from origin.core.agent import ToolCallRecord
         from origin.core.llm import ChatResult, TurnUsage

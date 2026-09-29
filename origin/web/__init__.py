@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from origin import __version__
-from origin.branding import Brand, app_locale, brand_dir, get_brand
+from origin.branding import Brand, app_locale, brand_dir, get_brand, product_version
 from origin.config import Settings, get_settings
 from origin.i18n import catalogs, languages
 
@@ -74,7 +74,8 @@ def render_index(
     brand = get_brand(settings)
     locale = app_locale(settings)
     boot = {
-        "version": __version__,
+        "version": product_version(settings),
+        "core_version": __version__,
         "brand": public_brand(brand),
         "locale": locale,
         "languages": languages(),

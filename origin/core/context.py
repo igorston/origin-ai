@@ -18,6 +18,7 @@ when what must be preserved, plus the last messages, no longer fits in the windo
 limit follows the machine and the model, like the window itself.
 """
 
+import copy
 import logging
 import math
 import re
@@ -392,6 +393,13 @@ class ContextManager:
         self.capacity = capacity
         self.model = model
         self.t = t or translator()  # closing reasons are shown to the user
+
+    def with_base(self, base_tokens: int) -> "ContextManager":
+        """The same manager for a turn whose fixed prompt has another size: the tools
+        offered vary per turn (the web, tools with nothing to work on yet)."""
+        clone = copy.copy(self)
+        clone.base_tokens = base_tokens
+        return clone
 
     def usage(
         self,

@@ -8,10 +8,12 @@ file or fields fall back to Origin's own defaults. See brand/brand.example.json.
 import json
 import logging
 import re
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
+from origin import __version__
 from origin.config import Settings
 from origin.i18n import Translator, resolve_locale
 
@@ -55,6 +57,9 @@ class Brand(BaseModel):
     product_name: str = "Origin"
     assistant_name: str = "Origin"
     description: str = "Local-first, modular personal AI assistant."
+    # The installed Python package whose version is the product's (a plugin's, e.g.
+    # "acme-origin"); by default the product is Origin itself.
+    package: str | None = None
     # An emoji / short text, or an image file in the brand folder ("logo.svg").
     logo: str = "🧬"
     favicon: str | None = None  # image file in the brand folder; defaults to the logo
@@ -101,6 +106,28 @@ def system_prompt(brand: Brand) -> str:
         persona = load_prompt("persona").format(persona=brand.persona.strip())
         prompt = f"{prompt}\n\n{persona}"
     return prompt
+
+
+def _package_version(settings: Settings) -> str | None:
+    package = get_brand(settings).package
+    if not package:
+        return None
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        logger.warning("Brand package %r is not installed; reporting Origin's version", package)
+        return None
+
+
+def product_version(settings: Settings) -> str:
+    """The version to report as the product's: its package's, else Origin's."""
+    return _package_version(settings) or __version__
+
+
+def version_label(settings: Settings) -> str:
+    """ "0.4.0 (Origin 0.5.0)" for a product on top of Origin; "0.5.0" for Origin itself."""
+    product = _package_version(settings)
+    return f"{product} (Origin {__version__})" if product else __version__
 
 
 def app_locale(settings: Settings) -> str:

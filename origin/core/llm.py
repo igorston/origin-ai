@@ -6,7 +6,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from itertools import chain
 from typing import Literal
@@ -205,6 +205,9 @@ class LLMEngine:
         self.contextual_recall = contextual_recall
         # Model for the routing turn; a deterministic copy makes tool decisions consistent.
         self.router = router or model
+        # Fixed prompt size, measured at warmup: {"bare": tokens, "tools": {name: tokens}}.
+        # A dict filled in place, so the workspaces' copies (with_memory) share it.
+        self._measured_prompt: dict = {}
 
     @classmethod
     def from_settings(
@@ -239,15 +242,32 @@ class LLMEngine:
         clone.tools = dict(tools or {})
         return clone
 
+    async def offered_tools(self, use_web: bool = False) -> dict[str, BaseTool]:
+        """The tools the model gets this turn. Network tools (web search, reading pages)
+        only when the request asks for them; a tool with metadata {"available": fn} only
+        when `fn()` (sync or async) says it can help now: the knowledge base's tools, while
+        the user has no document to read, would only cost context on every turn."""
+        tools = {}
+        for name, tool in self.tools.items():
+            meta = tool.metadata or {}
+            if meta.get("network") and not use_web:
+                continue
+            if callable(check := meta.get("available")):
+                try:
+                    result = check()
+                    available = await result if inspect.isawaitable(result) else result
+                except Exception:  # a failing check must not hide the tool
+                    logger.warning("Availability check of %s failed", name, exc_info=True)
+                    available = True
+                if not available:
+                    continue
+            tools[name] = tool
+        return tools
+
     def _bind_tools(
-        self, use_tools: bool, use_web: bool = False
+        self, use_tools: bool, tools: Mapping[str, BaseTool]
     ) -> tuple[Runnable[LanguageModelInput, BaseMessage], dict[str, BaseTool]]:
-        # Network tools (web search, reading pages) only when the request asks for them.
-        tools = {
-            name: tool
-            for name, tool in self.tools.items()
-            if use_web or not (tool.metadata or {}).get("network")
-        }
+        tools = dict(tools)
         if not (use_tools and tools):
             return self.model, {}
         try:
@@ -351,7 +371,7 @@ class LLMEngine:
             yield TurnUsage(input_tokens=0, output_tokens=writer.output_tokens)
             return
 
-        bound, tools = self._bind_tools(use_tools, use_web)
+        bound, tools = self._bind_tools(use_tools, await self.offered_tools(use_web))
         with timings.phase("context"):
             messages = await self._build_messages(
                 message, history, use_memory, bool(tools), summary
@@ -631,20 +651,51 @@ class LLMEngine:
             sections.append(load_prompt("tools"))
         return [SystemMessage("\n\n".join(sections))]
 
-    def estimate_base_tokens(self) -> int:
-        """Rough size of the fixed prompt, including the tool schemas the chat template
-        injects. Replaced by `measure_base_tokens` once the model is available."""
+    def _spread(self, tools_tokens: int) -> dict[str, int]:
+        """Split what the tools add to the prompt (their schemas and the tool instructions)
+        among them, by the size of each schema."""
+        sizes = {name: len(json.dumps(convert_to_openai_tool(t))) for name, t in self.tools.items()}
+        total = sum(sizes.values()) or 1
+        return {name: round(tools_tokens * size / total) for name, size in sizes.items()}
+
+    def _prompt_parts(self) -> tuple[int, dict[str, int]]:
+        """Tokens of the fixed prompt without tools, and what each tool adds to it. Measured
+        at warmup (shared with the other workspaces' copies); estimated until then."""
+        if self._measured_prompt:
+            return self._measured_prompt["bare"], self._measured_prompt["tools"]
+        bare = estimate_tokens(self.fixed_prompt(with_tools=False)[0].content)
         schemas = json.dumps([convert_to_openai_tool(t) for t in self.tools.values()])
         # JSON tokenizes looser than prose (measured: 802 real vs 1238 at 2.5 chars/token).
         schema_tokens = math.ceil(len(schemas) / JSON_CHARS_PER_TOKEN)
-        return estimate_tokens(self.fixed_prompt()[0].content) + schema_tokens
+        with_tools = estimate_tokens(self.fixed_prompt()[0].content) + schema_tokens
+        return bare, self._spread(with_tools - bare) if self.tools else {}
+
+    def base_tokens(self, tools: Iterable[str]) -> int:
+        """Size of the fixed prompt of a turn offered these tools (`offered_tools`)."""
+        bare, parts = self._prompt_parts()
+        return bare + sum(parts.get(name, 0) for name in tools)
+
+    def estimate_base_tokens(self) -> int:
+        """Rough size of the fixed prompt with the tools offered without the web (the tool
+        schemas the chat template injects included). `measure_base_tokens` replaces it."""
+        offline = [n for n, t in self.tools.items() if not (t.metadata or {}).get("network")]
+        return self.base_tokens(offline)
 
     async def measure_base_tokens(self) -> int:
-        """Exact size of the fixed prompt, as counted by the model's own tokenizer."""
-        bound, _ = self._bind_tools(True)
+        """Measure the fixed prompt with the model's own tokenizer, with and without every
+        tool; returns its size for a turn without the web, with the tools available now."""
         probe = "ok"
-        reply = await bound.ainvoke([*self.fixed_prompt(), HumanMessage(probe)])
-        measured = (reply.usage_metadata or {}).get("input_tokens", 0)
-        return (
-            max(0, measured - estimate_tokens(probe)) if measured else self.estimate_base_tokens()
-        )
+
+        async def measure(model: Runnable, with_tools: bool) -> int:
+            reply = await model.ainvoke([*self.fixed_prompt(with_tools), HumanMessage(probe)])
+            measured = (reply.usage_metadata or {}).get("input_tokens", 0)
+            return max(0, measured - estimate_tokens(probe)) if measured else 0
+
+        bare = await measure(self.model, False)
+        full = bare
+        if self.tools:
+            bound, _ = self._bind_tools(True, self.tools)
+            full = await measure(bound, True)
+        if bare and full >= bare:
+            self._measured_prompt.update(bare=bare, tools=self._spread(full - bare))
+        return self.base_tokens(await self.offered_tools())

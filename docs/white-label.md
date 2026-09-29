@@ -17,6 +17,7 @@ Se o arquivo não existir, o Origin usa a marca padrão. Se o arquivo estiver in
 | `product_name` | Título da página, logo, título da API em `/docs`, logs | `"Aurora"` |
 | `assistant_name` | Como o assistente se apresenta ("You are Aurora…") e o placeholder da mensagem | `"Aurora"` |
 | `description` | Descrição da API em `/docs` | `"Assistente do escritório Silva"` |
+| `package` | O pacote Python do produto, cuja versão aparece em "Sistema", em `/health`, em `/docs` e no log, junto da versão do Origin. Se ficar vazio, a versão é a do Origin | `"acme-origin"` |
 | `logo` | Um emoji ou texto curto, **ou** um arquivo de imagem na pasta da marca (`.svg`, `.png`, `.webp`…) | `"logo.svg"` |
 | `favicon` | Imagem do ícone da aba. Se ficar vazio, usa o `logo` | `"favicon.png"` |
 | `locale` | Idioma da interface e das mensagens do servidor. Se ficar vazio, usa `ORIGIN_LOCALE` | `"pt-BR"` |

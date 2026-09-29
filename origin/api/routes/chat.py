@@ -136,6 +136,15 @@ async def persist_optimization(
     await sessions.update(session_id, **fields)
 
 
+async def turn_context(
+    context: ContextManager, engine: LLMEngine, body: ChatRequest
+) -> ContextManager:
+    """The context budget with this turn's fixed prompt, whose size depends on the tools
+    it offers."""
+    tools = await engine.offered_tools(body.use_web) if body.use_tools else {}
+    return context.with_base(engine.base_tokens(tools))
+
+
 async def prepare_turn(
     body: ChatRequest, sessions: SessionStore, context: ContextManager, owner: str = ""
 ) -> PreparedTurn:
@@ -271,6 +280,7 @@ async def prefetch(events: AsyncIterator[T]) -> AsyncIterator[T]:
 async def chat(
     body: ChatRequest, engine: Engine, sessions: Sessions, context: Context, owner: Owner
 ) -> ChatResponse:
+    context = await turn_context(context, engine, body)
     turn = await prepare_turn(body, sessions, context, owner)
     result = await engine.generate(
         body.message,
@@ -341,6 +351,7 @@ async def chat_stream(
     body: ChatRequest, engine: Engine, sessions: Sessions, context: Context, owner: Owner
 ) -> StreamingResponse:
     """Plain-text token stream (easy to consume with curl)."""
+    context = await turn_context(context, engine, body)
     turn = await prepare_turn(body, sessions, context, owner)
 
     async def text_only() -> AsyncIterator[str]:
@@ -361,6 +372,7 @@ async def chat_events(
 ) -> StreamingResponse:
     """Server-Sent Events: `context` (budget, and any optimization done), `tool_call`,
     `token`, then `done` with the context after the turn (or `error` mid-stream)."""
+    context = await turn_context(context, engine, body)
     turn = await prepare_turn(body, sessions, context, owner)
     events = await prefetch(run_and_persist(turn, body, engine, sessions, context))
 

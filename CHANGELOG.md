@@ -2,6 +2,12 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [0.6.0] - 2026-09-29
+
+### Extensões
+- **Tools sob demanda:** o metadado `"available": fn` deixa uma tool de fora do turno quando ela não tem com o que trabalhar. O orçamento de contexto de cada turno agora conta só as tools oferecidas (e as de internet, quando o 🌐 está ligado), a partir de uma medição feita no aquecimento: o texto fixo sem tools e o peso de cada uma.
+- **Versão do produto:** o campo `package` da marca aponta o pacote Python do produto. "Sistema", `/health` (`version` e o novo `core_version`), `/docs` e o log passam a mostrar a versão dele junto da do Origin, em vez da do Origin com o nome do produto.
+
 ## [0.5.0] - 2026-09-29
 
 ### Segurança
@@ -109,6 +115,7 @@ Primeira versão pública.
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
 
+[0.6.0]: https://github.com/igorston/origin-ai/releases/tag/v0.6.0
 [0.5.0]: https://github.com/igorston/origin-ai/releases/tag/v0.5.0
 [0.4.2]: https://github.com/igorston/origin-ai/releases/tag/v0.4.2
 [0.4.1]: https://github.com/igorston/origin-ai/releases/tag/v0.4.1

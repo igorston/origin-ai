@@ -170,7 +170,7 @@ function renderSystem(health) {
   setChildren(el.systemInfo,
     h("dl", { class: "facts" },
       h("dt", {}, t("system.status")), h("dd", {}, h("span", { class: health.status === "ok" ? "badge ok" : "badge bad" }, health.status)),
-      h("dt", {}, t("system.version")), h("dd", {}, health.version),
+      h("dt", {}, t("system.version")), h("dd", {}, health.core_version && health.core_version !== health.version ? `${health.version} (Origin ${health.core_version})` : health.version),
       h("dt", {}, "Ollama"), h("dd", {}, h("code", {}, ollama.url), " ", ollama.reachable ? "✓" : t("system.ollama_down")),
     ),
     models.length ? h("div", {}, h("h3", {}, t("system.models")), h("ul", { class: "plain" }, models)) : null,

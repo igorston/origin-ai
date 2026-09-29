@@ -12,13 +12,12 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from origin import __version__
 from origin.api.errors import register_error_handlers
 from origin.api.routes import auth, calibration, chat, health, memory, sessions, setup, tools
 from origin.auth import UserStore, bootstrap_admin
 from origin.auth.middleware import AuthMiddleware
 from origin.auth.tokens import secret_key
-from origin.branding import get_brand
+from origin.branding import get_brand, product_version, version_label
 from origin.config import Settings, get_settings
 from origin.core import LLMEngine, make_chat_model
 from origin.core.capacity import capacity_for
@@ -79,7 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logger.info(
             "%s initialized (v%s) | model=%s | embeddings=%s | memories=%d | tools=%s",
             brand.product_name,
-            __version__,
+            version_label(settings),
             settings.ollama_model,
             settings.ollama_embed_model,
             default.memory.count(),
@@ -120,7 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title=brand.product_name,
         description=brand.description,
-        version=__version__,
+        version=product_version(settings),
         lifespan=lifespan,
     )
     register_error_handlers(app)

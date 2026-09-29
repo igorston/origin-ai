@@ -54,6 +54,12 @@ class MidStreamFailure(LLMEngine):
     def __init__(self) -> None:
         self.model_name = "failing"
 
+    async def offered_tools(self, use_web: bool = False) -> dict:
+        return {}
+
+    def base_tokens(self, tools) -> int:
+        return 50
+
     async def events(self, *args: object, **kwargs: object):
         yield "parcial"
         raise RuntimeError("model crashed")
