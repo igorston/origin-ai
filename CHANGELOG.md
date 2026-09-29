@@ -2,6 +2,16 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [0.2.0] - 2026-09-29
+
+### Extensões
+- O Origin pode ser usado como dependência por outro projeto ([docs/extending.md](docs/extending.md)):
+  - tools de pacotes instalados, pelo entry point `origin.tools`;
+  - rotas e ajustes no app, pelo entry point `origin.app`;
+  - um plugin que falha impede o app de subir, com o nome dele no erro.
+- O app é montado por `origin.app.create_app()`, dentro do pacote. O `main.py` continua funcionando.
+- Comandos `origin` e `python -m origin` para rodar o pacote instalado.
+
 ## [0.1.0] - 2026-09-28
 
 Primeira versão pública.
@@ -49,4 +59,5 @@ Primeira versão pública.
   - cookies assinados, limite de tentativas e bloqueio de requisições de outras origens.
 - CI com os testes em Python 3.11 a 3.14 e o build da imagem.
 
+[0.2.0]: https://github.com/igorston/origin-ai/releases/tag/v0.2.0
 [0.1.0]: https://github.com/igorston/origin-ai/releases/tag/v0.1.0

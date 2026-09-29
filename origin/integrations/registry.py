@@ -2,7 +2,8 @@
 
 Any module inside `origin.integrations.tools` that exposes
 `get_tools(ctx: ToolContext) -> list[BaseTool]` is loaded automatically.
-Modules whose name starts with `_` are skipped.
+Modules whose name starts with `_` are skipped. Installed packages add their own through
+the "origin.tools" entry point (see `origin.plugins`).
 """
 
 import importlib
@@ -17,6 +18,7 @@ from langchain_core.tools import BaseTool
 from origin.config import Settings
 from origin.memory import VectorMemory
 from origin.memory.curator import MemoryCurator
+from origin.plugins import plugin_tool_factories
 
 logger = logging.getLogger(__name__)
 
@@ -69,5 +71,12 @@ class ToolRegistry:
             for tool in factory(ctx):
                 if tool.name not in disabled:
                     registry.register(tool)
+        if package == TOOLS_PACKAGE:
+            # Installed plugins (the "origin.tools" entry points), after the built-ins: a
+            # plugin tool with a built-in's name is refused as a duplicate, not swapped in.
+            for _, factory in plugin_tool_factories():
+                for tool in factory(ctx):
+                    if tool.name not in disabled:
+                        registry.register(tool)
         logger.debug("Discovered tools: %s", sorted(registry._tools))
         return registry

@@ -554,6 +554,10 @@ pytest -m "not integration"
 ruff check . && ruff format --check .
 ```
 
+## Estendendo o Origin
+
+Outro projeto pode usar o Origin como dependência (`origin-ai`) e acrescentar tools, rotas e a própria marca por *entry points*, sem copiar o código: veja [docs/extending.md](docs/extending.md). Instalado como pacote, ele roda com `origin` ou `python -m origin`.
+
 ## White label, idiomas e contas
 
 - **Marca:** um arquivo `brand/brand.json` troca o nome do produto e do assistente, o logo, o favicon, as cores (claro e escuro), a persona, a tela inicial e os links. Sem o arquivo, é o Origin. Com um arquivo inválido, o log avisa e a marca padrão continua. A persona nunca vai para o navegador. Veja o [guia de white label](docs/white-label.md).
@@ -589,7 +593,7 @@ flowchart LR
 
 ```
 origin-ai/
-├── main.py                  # Entry point
+├── main.py                  # Entry point (the app is built by origin/app.py)
 ├── origin/
 │   ├── api/routes/          # Endpoints FastAPI
 │   ├── config/              # Settings (pydantic-settings)
